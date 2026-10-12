@@ -70,7 +70,7 @@ func run(configPath, pin string, platforms []string) error {
 		platforms = slices.Sorted(maps.Keys(cfg.Assets))
 	}
 
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outDir, 0o700); err != nil {
 		return err
 	}
 	for _, p := range platforms {
@@ -109,7 +109,7 @@ func fetch(version, platform string, a asset) error {
 	base := filepath.Join(outDir, "opengrep_"+strings.ReplaceAll(platform, "/", "_"))
 	if sum, err := fileSHA256(base); err == nil && sum == a.SHA256 {
 		fmt.Printf("%s: %s %s already present\n", platform, a.Name, version)
-		return os.WriteFile(base+".sha256", []byte(a.SHA256), 0o644)
+		return os.WriteFile(base+".sha256", []byte(a.SHA256), 0o600)
 	}
 
 	url := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", repo, version, a.Name)
@@ -142,7 +142,7 @@ func fetch(version, platform string, a asset) error {
 	if err := os.Rename(tmp.Name(), base); err != nil {
 		return err
 	}
-	return os.WriteFile(base+".sha256", []byte(a.SHA256), 0o644)
+	return os.WriteFile(base+".sha256", []byte(a.SHA256), 0o600)
 }
 
 func fileSHA256(path string) (string, error) {
@@ -198,7 +198,7 @@ func repin(path string, cfg *config, tag string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 		return err
 	}
 	fmt.Printf("pinned %s to opengrep %s\n", path, tag)

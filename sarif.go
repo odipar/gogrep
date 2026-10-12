@@ -63,7 +63,7 @@ func rebrandFile(path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, out, 0o644)
+	return os.WriteFile(path, out, 0o600)
 }
 
 // rebrand sets tool.driver.name to toolName in every run of a SARIF log,

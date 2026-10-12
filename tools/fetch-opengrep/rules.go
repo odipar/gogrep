@@ -32,7 +32,7 @@ func fetchRules(pin rulesPin) error {
 		return fmt.Errorf("invalid rule set name %q", pin.Name)
 	}
 	dir := filepath.Join(outDir, "rules")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	out := filepath.Join(dir, pin.Name+".tar.gz")
@@ -86,11 +86,11 @@ func fetchRules(pin rulesPin) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(out, data, 0o644); err != nil {
+	if err := os.WriteFile(out, data, 0o600); err != nil {
 		return err
 	}
 	fmt.Printf("rules: packed %d rule files (%d KB)\n", n, len(data)/1024)
-	return os.WriteFile(stamp, []byte(want), 0o644)
+	return os.WriteFile(stamp, []byte(want), 0o600)
 }
 
 // licenseFiles returns the license and notice files at the repo root, which
@@ -178,7 +178,7 @@ func tarGz(root string, files []entry) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		hdr := &tar.Header{Name: f.name, Mode: 0o644, Size: int64(len(data)), Format: tar.FormatPAX}
+		hdr := &tar.Header{Name: f.name, Mode: 0o600, Size: int64(len(data)), Format: tar.FormatPAX}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return nil, err
 		}

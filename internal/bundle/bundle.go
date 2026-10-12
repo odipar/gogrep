@@ -37,7 +37,7 @@ func Path() (path string, ok bool, err error) {
 // extract writes the binary via a temp file and rename, so concurrent gogrep
 // runs never execute a partially written file.
 func extract(dir, path string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, ".opengrep-*")
@@ -52,7 +52,7 @@ func extract(dir, path string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
+	if err := os.Chmod(tmp.Name(), 0o700); err != nil {
 		return err
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {

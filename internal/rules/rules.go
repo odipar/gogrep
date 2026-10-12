@@ -152,7 +152,7 @@ func key(sets map[string]Set) string {
 // never see a half-written rule directory.
 func write(dir string, sets map[string]Set) error {
 	parent := filepath.Dir(dir)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
+	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return err
 	}
 	tmp, err := os.MkdirTemp(parent, ".tmp-")
@@ -163,10 +163,10 @@ func write(dir string, sets map[string]Set) error {
 	for name, set := range sets {
 		for p, data := range set {
 			dst := filepath.Join(tmp, name, filepath.FromSlash(p))
-			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 				return err
 			}
-			if err := os.WriteFile(dst, data, 0o644); err != nil {
+			if err := os.WriteFile(dst, data, 0o600); err != nil {
 				return err
 			}
 		}
