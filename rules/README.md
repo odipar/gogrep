@@ -1,7 +1,8 @@
 # gogrep rules
 
 Opengrep rules in this directory are embedded in every gogrep build as the
-`gogrep` rule set and run by default, next to the bundled opengrep-rules.
+`gogrep` rule set and run by default, next to the rule sets pinned in
+`opengrep.json`.
 
 Lay them out like opengrep-rules, so `--gogrep-lang` and `--gogrep-category`
 can filter them:

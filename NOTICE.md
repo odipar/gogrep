@@ -28,3 +28,16 @@ The Commons Clause does not grant the right to sell a product or service
 whose value derives entirely or substantially from these rules. The full
 license text is embedded with the rules and written next to them as
 `opengrep-rules/LICENSE` when gogrep extracts them.
+
+## 0xdea/semgrep-rules (rule set `0xdea`)
+
+- Source: https://github.com/0xdea/semgrep-rules
+- License: MIT, Copyright (c) 2022 raptor (Marco Ivaldi)
+
+## dgryski/semgrep-go (rule set `semgrep-go`)
+
+- Source: https://github.com/dgryski/semgrep-go
+- License: MIT, Copyright (c) 2020 Damian Gryski
+
+Each rule set's license file travels with it and is written next to its
+rules as `<rule set>/LICENSE` when gogrep extracts them.

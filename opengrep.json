@@ -35,6 +35,18 @@
       "name": "opengrep-rules",
       "repo": "opengrep/opengrep-rules",
       "commit": "f1d2b562b414783763fd02a6ed2736eaed622efa"
+    },
+    {
+      "name": "0xdea",
+      "repo": "0xdea/semgrep-rules",
+      "commit": "dae50da6e6e629750f1daec73a01ef9206a372ab",
+      "path": "rules"
+    },
+    {
+      "name": "semgrep-go",
+      "repo": "dgryski/semgrep-go",
+      "commit": "db0227c03f4b3c4e71d900188d51db4c81d66932",
+      "lang": "go"
     }
   ]
 }

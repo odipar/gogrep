@@ -19,8 +19,10 @@ import (
 // addressing guarantees what we get.
 type rulesPin struct {
 	Name   string `json:"name"` // rule set name, used in --gogrep-ruleset
-	Repo   string `json:"repo"`
+	Repo   string `json:"repo"` // GitHub owner/name
 	Commit string `json:"commit"`
+	Path   string `json:"path,omitempty"` // repo subdirectory holding the rules
+	Lang   string `json:"lang,omitempty"` // language dir to file rules under, if the repo has none
 }
 
 // fetchRules clones the pinned rules commit and packs its rule files, plus
@@ -35,7 +37,8 @@ func fetchRules(pin rulesPin) error {
 	}
 	out := filepath.Join(dir, pin.Name+".tar.gz")
 	stamp := filepath.Join(dir, pin.Name+".commit")
-	if got, err := os.ReadFile(stamp); err == nil && string(got) == pin.Commit {
+	want := pin.Commit + " " + pin.Path + " " + pin.Lang
+	if got, err := os.ReadFile(stamp); err == nil && string(got) == want {
 		if _, err := os.Stat(out); err == nil {
 			fmt.Printf("rules: %s@%.12s already present\n", pin.Repo, pin.Commit)
 			return nil
@@ -68,19 +71,26 @@ func fetchRules(pin rulesPin) error {
 		return fmt.Errorf("rules: checked out %q, pinned %s (%v)", head, pin.Commit, err)
 	}
 
-	files, err := ruleFiles(tmp)
+	files, err := ruleFiles(tmp, pin.Path, pin.Lang)
 	if err != nil {
 		return err
 	}
-	data, err := tarGz(tmp, append(files, licenseFiles(tmp)...))
+	if len(files) == 0 {
+		return fmt.Errorf("no rule files found in %s/%s", pin.Repo, pin.Path)
+	}
+	n := len(files)
+	for _, l := range licenseFiles(tmp) {
+		files = append(files, entry{name: l, src: l})
+	}
+	data, err := tarGz(tmp, files)
 	if err != nil {
 		return err
 	}
 	if err := os.WriteFile(out, data, 0o644); err != nil {
 		return err
 	}
-	fmt.Printf("rules: packed %d rule files (%d KB)\n", len(files), len(data)/1024)
-	return os.WriteFile(stamp, []byte(pin.Commit), 0o644)
+	fmt.Printf("rules: packed %d rule files (%d KB)\n", n, len(data)/1024)
+	return os.WriteFile(stamp, []byte(want), 0o644)
 }
 
 // licenseFiles returns the license and notice files at the repo root, which
@@ -97,17 +107,27 @@ func licenseFiles(root string) []string {
 	return files
 }
 
-// ruleFiles lists the YAML files under root that hold rules (their first
-// non-comment line is "rules:"), skipping hidden dirs, rule tests and the
-// repo's rule template.
-func ruleFiles(root string) ([]string, error) {
-	var files []string
+// An entry is a file to archive: its name in the archive and its slash path
+// in the repo.
+type entry struct{ name, src string }
+
+// ruleFiles lists the YAML files under repo/sub that hold rules (their first
+// non-comment line is "rules:"), skipping hidden dirs and rule tests. Archive
+// names are relative to sub and prefixed with lang when set; files that end
+// up outside a language directory (like opengrep-rules' template.yaml) are
+// skipped.
+func ruleFiles(repo, sub, lang string) ([]entry, error) {
+	var files []entry
+	root := filepath.Join(repo, filepath.FromSlash(sub))
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
+		if lang != "" {
+			rel = lang + "/" + rel
+		}
 		if d.IsDir() {
 			if rel != "." && strings.HasPrefix(d.Name(), ".") {
 				return fs.SkipDir
@@ -122,10 +142,11 @@ func ruleFiles(root string) ([]string, error) {
 		if ok, err := isRuleFile(p); err != nil || !ok {
 			return err
 		}
-		files = append(files, rel)
+		src, _ := filepath.Rel(repo, p)
+		files = append(files, entry{name: rel, src: filepath.ToSlash(src)})
 		return nil
 	})
-	slices.Sort(files)
+	slices.SortFunc(files, func(a, b entry) int { return strings.Compare(a.name, b.name) })
 	return files, err
 }
 
@@ -146,18 +167,18 @@ func isRuleFile(p string) (bool, error) {
 	return false, sc.Err()
 }
 
-// tarGz packs files (slash paths relative to root) with fixed metadata, so the
-// same commit always yields the same bytes and checksum.
-func tarGz(root string, files []string) ([]byte, error) {
+// tarGz packs files from root with fixed metadata, so the same commit always
+// yields the same bytes and checksum.
+func tarGz(root string, files []entry) ([]byte, error) {
 	var buf bytes.Buffer
 	gz, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 	tw := tar.NewWriter(gz)
-	for _, name := range files {
-		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+	for _, f := range files {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(f.src)))
 		if err != nil {
 			return nil, err
 		}
-		hdr := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(data)), Format: tar.FormatPAX}
+		hdr := &tar.Header{Name: f.name, Mode: 0o644, Size: int64(len(data)), Format: tar.FormatPAX}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return nil, err
 		}
