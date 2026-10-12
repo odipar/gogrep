@@ -17,7 +17,7 @@ func main() {
 }
 
 func run(args []string) int {
-	cmd := exec.Command(opengrepBin(), args...) // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
+	cmd := exec.Command(opengrepBin(), args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 
 	// The child shares our process group and receives Ctrl-C directly;
