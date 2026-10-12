@@ -27,7 +27,7 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Scan
-        run: gogrep scan --config auto --sarif -o gogrep.sarif .
+        run: gogrep scan --sarif -o gogrep.sarif .
 
       - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:

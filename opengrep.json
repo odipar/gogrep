@@ -29,5 +29,12 @@
       "name": "opengrep_windows_x86.exe",
       "sha256": "523b1074a81006436fec457e2daccf7cf7cacc04000d4482f1072a1b19bc6372"
     }
-  }
+  },
+  "rules": [
+    {
+      "name": "opengrep-rules",
+      "repo": "opengrep/opengrep-rules",
+      "commit": "f1d2b562b414783763fd02a6ed2736eaed622efa"
+    }
+  ]
 }

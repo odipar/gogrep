@@ -1,6 +1,6 @@
-// Command fetch-opengrep downloads the opengrep binaries pinned in
-// opengrep.json into internal/bundle/bin, verifying each SHA-256, so that
-// gogrep can be built with -tags bundled.
+// Command fetch-opengrep downloads the opengrep binaries and the rule set
+// pinned in opengrep.json into internal/bundle/bin, verifying each SHA-256
+// (and the rules' git commit), so that gogrep can be built with -tags bundled.
 //
 // Usage:
 //
@@ -35,6 +35,7 @@ const (
 type config struct {
 	Version string           `json:"version"`
 	Assets  map[string]asset `json:"assets"` // keyed by GOOS/GOARCH[/variant]
+	Rules   []rulesPin       `json:"rules"`
 }
 
 type asset struct {
@@ -79,6 +80,11 @@ func run(configPath, pin string, platforms []string) error {
 		}
 		if err := fetch(cfg.Version, p, a); err != nil {
 			return fmt.Errorf("%s: %w", p, err)
+		}
+	}
+	for _, r := range cfg.Rules {
+		if err := fetchRules(r); err != nil {
+			return fmt.Errorf("rules %s: %w", r.Name, err)
 		}
 	}
 	return nil

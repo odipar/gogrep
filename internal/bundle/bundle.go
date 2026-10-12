@@ -1,6 +1,6 @@
-// Package bundle holds the opengrep binary embedded in gogrep builds made with
-// -tags bundled (plus musl for the Alpine variant on Linux). Run
-// `go run ./tools/fetch-opengrep` first to download it.
+// Package bundle holds the opengrep binary and rule sets embedded in gogrep
+// builds made with -tags bundled (plus musl for the Alpine variant on Linux).
+// Run `go run ./tools/fetch-opengrep` first to download them.
 package bundle
 
 import (
@@ -63,4 +63,17 @@ func extract(dir, path string) error {
 		return err
 	}
 	return nil
+}
+
+// RuleSets returns the embedded rule set archives (gzipped tars of rule YAML
+// plus license files), keyed by rule set name. It is empty in unbundled builds.
+func RuleSets() map[string][]byte {
+	sets := map[string][]byte{}
+	entries, _ := ruleArchives.ReadDir("bin/rules")
+	for _, e := range entries {
+		if name, ok := strings.CutSuffix(e.Name(), ".tar.gz"); ok {
+			sets[name], _ = ruleArchives.ReadFile("bin/rules/" + e.Name())
+		}
+	}
+	return sets
 }

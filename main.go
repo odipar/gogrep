@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/odipar/gogrep/internal/bundle"
@@ -18,6 +20,14 @@ func main() {
 }
 
 func run(args []string) int {
+	args, filter, err := gogrepFlags(args)
+	if err == nil {
+		args, err = withRules(args, filter)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gogrep: %v\n", err)
+		return 2
+	}
 	sarifFiles, sarifStdout := sarifTargets(args)
 
 	bin, err := opengrepBin()
@@ -27,6 +37,7 @@ func run(args []string) int {
 	}
 	cmd := exec.Command(bin, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Env = utf8Env(os.Environ())
 	var stdout bytes.Buffer
 	if sarifStdout {
 		cmd.Stdout = &stdout
@@ -59,6 +70,25 @@ func run(args []string) int {
 		}
 	}
 	return code
+}
+
+// utf8Env makes opengrep read rule files as UTF-8: without a UTF-8 locale its
+// embedded Python falls back to ASCII and crashes on non-ASCII rules.
+func utf8Env(env []string) []string {
+	if runtime.GOOS == "windows" {
+		return append(env, "PYTHONUTF8=1")
+	}
+	locale := ""
+	for _, name := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		if v := os.Getenv(name); v != "" {
+			locale = v
+			break
+		}
+	}
+	if l := strings.ToLower(locale); strings.Contains(l, "utf-8") || strings.Contains(l, "utf8") {
+		return env
+	}
+	return append(env, "LC_ALL=C.UTF-8")
 }
 
 // opengrepBin resolves the wrapped binary: $OPENGREP_BIN, then the binary
