@@ -40,7 +40,8 @@
       "name": "0xdea",
       "repo": "0xdea/semgrep-rules",
       "commit": "dae50da6e6e629750f1daec73a01ef9206a372ab",
-      "path": "rules"
+      "path": "rules/c",
+      "lang": "c"
     },
     {
       "name": "semgrep-go",
