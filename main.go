@@ -1,4 +1,4 @@
-// Command opengrep-wrapper is a thin wrapper around the opengrep binary.
+// Command gogrep is a thin wrapper around the opengrep binary.
 package main
 
 import (
@@ -29,7 +29,7 @@ func run(args []string) int {
 		if errors.As(err, &exitErr) {
 			return exitErr.ExitCode()
 		}
-		fmt.Fprintf(os.Stderr, "opengrep-wrapper: %v\n", err)
+		fmt.Fprintf(os.Stderr, "gogrep: %v\n", err)
 		return 1
 	}
 	return 0

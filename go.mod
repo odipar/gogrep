@@ -1,3 +1,3 @@
-module opengrep-wrapper
+module gogrep
 
 go 1.26.2
