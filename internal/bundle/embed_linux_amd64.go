@@ -1,4 +1,4 @@
-//go:build bundled
+//go:build bundled && !musl
 
 package bundle
 

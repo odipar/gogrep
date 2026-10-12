@@ -27,12 +27,16 @@ jobs:
       - name: Build
         run: |
           mkdir -p dist
+          # Targets are GOOS/GOARCH[/variant]; a variant (musl) becomes a
+          # build tag and a suffix on the file name.
           for target in $(jq -r '.assets | keys[]' opengrep.json); do
-            os=${target%/*} arch=${target#*/} ext=
+            IFS=/ read -r os arch variant <<< "$target"
+            tags=bundled name=gogrep_${os}_${arch} ext=
+            [ -n "$variant" ] && tags="$tags,$variant" name="${name}_$variant"
             [ "$os" = windows ] && ext=.exe
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
-              go build -tags bundled -trimpath -ldflags "-s -w" \
-              -o "dist/gogrep_${os}_${arch}${ext}" .
+              go build -tags "$tags" -trimpath -ldflags "-s -w" \
+              -o "dist/$name$ext" .
           done
           (cd dist && sha256sum * > checksums.txt)
           cat dist/checksums.txt

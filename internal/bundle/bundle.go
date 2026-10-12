@@ -1,5 +1,6 @@
 // Package bundle holds the opengrep binary embedded in gogrep builds made with
-// -tags bundled. Run `go run ./tools/fetch-opengrep` first to download it.
+// -tags bundled (plus musl for the Alpine variant on Linux). Run
+// `go run ./tools/fetch-opengrep` first to download it.
 package bundle
 
 import (

@@ -13,9 +13,17 @@
       "name": "opengrep_manylinux_x86",
       "sha256": "a66aa3278457f02b287b985a45b6762aebcaba5000f2689245fd1ed86d1456c7"
     },
+    "linux/amd64/musl": {
+      "name": "opengrep_musllinux_x86",
+      "sha256": "f757557fa23c217e54c140a9e609a46397e668518ca1394436eb76d83ba560fe"
+    },
     "linux/arm64": {
       "name": "opengrep_manylinux_aarch64",
       "sha256": "90acea5df4b733083f388d4feeb250ca802f671b33d1f222653d1e571dd2b0d8"
+    },
+    "linux/arm64/musl": {
+      "name": "opengrep_musllinux_aarch64",
+      "sha256": "564211ffe4e932f89a3b4d5e04c4a8c6dc4fb1c4e61e9a830f3afbd9ab2e5f97"
     },
     "windows/amd64": {
       "name": "opengrep_windows_x86.exe",

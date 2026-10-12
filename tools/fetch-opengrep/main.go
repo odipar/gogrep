@@ -7,6 +7,7 @@
 //	go run ./tools/fetch-opengrep                  # current platform
 //	go run ./tools/fetch-opengrep all              # every platform in the config
 //	go run ./tools/fetch-opengrep linux/amd64 ...  # specific platforms
+//	go run ./tools/fetch-opengrep linux/amd64/musl # musl (Alpine) variant
 //	go run ./tools/fetch-opengrep -pin v1.31.0     # re-pin the config to another release
 package main
 
@@ -33,7 +34,7 @@ const (
 
 type config struct {
 	Version string           `json:"version"`
-	Assets  map[string]asset `json:"assets"` // keyed by GOOS/GOARCH
+	Assets  map[string]asset `json:"assets"` // keyed by GOOS/GOARCH[/variant]
 }
 
 type asset struct {
