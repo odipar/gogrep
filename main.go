@@ -9,9 +9,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"syscall"
-)
 
-const defaultBin = "/Users/rapido/.local/bin/opengrep"
+	"github.com/odipar/gogrep/internal/bundle"
+)
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -20,7 +20,12 @@ func main() {
 func run(args []string) int {
 	sarifFiles, sarifStdout := sarifTargets(args)
 
-	cmd := exec.Command(opengrepBin(), args...)
+	bin, err := opengrepBin()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gogrep: %v\n", err)
+		return 1
+	}
+	cmd := exec.Command(bin, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	var stdout bytes.Buffer
 	if sarifStdout {
@@ -56,10 +61,17 @@ func run(args []string) int {
 	return code
 }
 
-// opengrepBin resolves the wrapped binary: $OPENGREP_BIN, then the default path.
-func opengrepBin() string {
+// opengrepBin resolves the wrapped binary: $OPENGREP_BIN, then the binary
+// embedded in bundled builds, then opengrep on $PATH.
+func opengrepBin() (string, error) {
 	if p := os.Getenv("OPENGREP_BIN"); p != "" {
-		return p
+		return p, nil
 	}
-	return defaultBin
+	if p, ok, err := bundle.Path(); ok {
+		if err != nil {
+			return "", fmt.Errorf("extracting embedded opengrep: %w", err)
+		}
+		return p, nil
+	}
+	return exec.LookPath("opengrep")
 }

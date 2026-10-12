@@ -1,1 +1,3 @@
 gogrep
+/dist/
+/internal/bundle/bin/

@@ -10,9 +10,6 @@ permissions:
   contents: read
   security-events: write
 
-env:
-  OPENGREP_VERSION: v1.30.2
-
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -23,17 +20,11 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install opengrep
+      - name: Build gogrep with the pinned opengrep
         run: |
-          mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/opengrep" \
-            "https://github.com/opengrep/opengrep/releases/download/${OPENGREP_VERSION}/opengrep_manylinux_x86"
-          chmod +x "$RUNNER_TEMP/bin/opengrep"
-          echo "OPENGREP_BIN=$RUNNER_TEMP/bin/opengrep" >> "$GITHUB_ENV"
+          go run ./tools/fetch-opengrep
+          go build -tags bundled -o "$RUNNER_TEMP/bin/gogrep" .
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-
-      - name: Build gogrep
-        run: go build -o "$RUNNER_TEMP/bin/gogrep" .
 
       - name: Scan
         run: gogrep scan --config auto --sarif -o gogrep.sarif .

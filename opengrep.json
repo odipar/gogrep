@@ -1,0 +1,25 @@
+{
+  "version": "v1.30.2",
+  "assets": {
+    "darwin/amd64": {
+      "name": "opengrep_osx_x86",
+      "sha256": "fcf47da30d5c3a11119f2ec4e0d1ee55e3c3822e8f90d909bf9f33dfce99044a"
+    },
+    "darwin/arm64": {
+      "name": "opengrep_osx_arm64",
+      "sha256": "f1aaa30b88959cb82522c4e1475816278a1f161f994509a518453c0455f9d24b"
+    },
+    "linux/amd64": {
+      "name": "opengrep_manylinux_x86",
+      "sha256": "a66aa3278457f02b287b985a45b6762aebcaba5000f2689245fd1ed86d1456c7"
+    },
+    "linux/arm64": {
+      "name": "opengrep_manylinux_aarch64",
+      "sha256": "90acea5df4b733083f388d4feeb250ca802f671b33d1f222653d1e571dd2b0d8"
+    },
+    "windows/amd64": {
+      "name": "opengrep_windows_x86.exe",
+      "sha256": "523b1074a81006436fec457e2daccf7cf7cacc04000d4482f1072a1b19bc6372"
+    }
+  }
+}
