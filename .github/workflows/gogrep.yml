@@ -1,0 +1,43 @@
+name: gogrep
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  OPENGREP_VERSION: v1.30.2
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install opengrep
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/opengrep" \
+            "https://github.com/opengrep/opengrep/releases/download/${OPENGREP_VERSION}/opengrep_manylinux_x86"
+          chmod +x "$RUNNER_TEMP/bin/opengrep"
+          echo "OPENGREP_BIN=$RUNNER_TEMP/bin/opengrep" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Build gogrep
+        run: go build -o "$RUNNER_TEMP/bin/gogrep" .
+
+      - name: Scan
+        run: gogrep scan --config auto --sarif -o gogrep.sarif .
+
+      - uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: gogrep.sarif
