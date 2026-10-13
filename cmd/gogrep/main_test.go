@@ -1,4 +1,4 @@
-package gogrep
+package main
 
 import (
 	"bytes"
@@ -31,26 +31,13 @@ func TestMain(m *testing.M) {
 	if os.Getenv("GOGREP_TEST_FAKE_OPENGREP") == "1" {
 		os.Exit(fakeopengrep.Main(os.Args[1:]))
 	}
-	pins, err := os.ReadFile(filepath.Join(repoDir, "opengrep.json"))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
-	}
-	testAssets = Assets{
-		Rules:  os.DirFS(filepath.Join(repoDir, "rules")),
-		Suites: os.DirFS(filepath.Join(repoDir, "suites")),
-		Pins:   pins,
-	}
 	os.Exit(m.Run())
 }
-
-// testAssets are the files main.go embeds, read from the repository.
-var testAssets Assets
 
 // newTestCLI returns the cli that run would use, which discards its output.
 func newTestCLI(t *testing.T) *cli {
 	t.Helper()
-	c, err := newCLI(testAssets, io.Discard, io.Discard)
+	c, err := newCLI(io.Discard, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +61,7 @@ func useFakeOpengrep(t *testing.T, code int) {
 // runGogrep calls run with args and returns its exit code and output.
 func runGogrep(args ...string) (code int, stdout, stderr string) {
 	var out, errb bytes.Buffer
-	code = run(args, testAssets, &out, &errb)
+	code = run(args, &out, &errb)
 	return code, out.String(), errb.String()
 }
 

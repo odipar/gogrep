@@ -1,4 +1,4 @@
-package gogrep
+package main
 
 import (
 	"crypto/sha256"

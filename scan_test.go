@@ -1,4 +1,4 @@
-package engine
+package gogrep
 
 import (
 	"bytes"
@@ -189,7 +189,7 @@ func TestScanStderr(t *testing.T) {
 // Findings are decoded from the log, which is rebranded.
 func TestScanFindings(t *testing.T) {
 	t.Parallel()
-	recorded, err := filepath.Abs(filepath.Join("..", "sarif", "testdata", "suppressed.json"))
+	recorded, err := filepath.Abs(filepath.Join("internal", "sarif", "testdata", "suppressed.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

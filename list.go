@@ -1,4 +1,4 @@
-package engine
+package gogrep
 
 import (
 	"io/fs"
@@ -79,7 +79,7 @@ func (e *Engine) Suites(dir string, opts *SuitesOptions) ([]Suite, error) {
 		return nil, err
 	}
 	sources := map[string]string{}
-	entries, _ := fs.ReadDir(e.files.Suites, ".")
+	entries, _ := fs.ReadDir(e.src.suites, ".")
 	for _, d := range entries {
 		if name, ok := strings.CutSuffix(d.Name(), ".yaml"); ok {
 			sources[name] = "built-in"

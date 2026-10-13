@@ -28,8 +28,14 @@ chmod +x gogrep_darwin_arm64 && mv gogrep_darwin_arm64 /usr/local/bin/gogrep
 The executables are not signed. On macOS, a copy downloaded with a browser
 needs `xattr -d com.apple.quarantine gogrep` before it will run.
 
-With Go, `go install github.com/odipar/gogrep@latest` builds gogrep without
-opengrep, and `gogrep install-opengrep` downloads the opengrep release that
+With Go 1.26 or later, build gogrep without opengrep and then download the
+opengrep it pins:
+
+```sh
+go install github.com/odipar/gogrep/cmd/gogrep@latest && gogrep install-opengrep
+```
+
+`gogrep install-opengrep` downloads the opengrep release that
 gogrep pins from GitHub into gogrep's cache, checking its SHA-256 against
 [opengrep.json](opengrep.json). Without network access, fetch the release
 asset (such as `opengrep_osx_arm64` or `opengrep_manylinux_x86`) elsewhere
@@ -481,7 +487,7 @@ pass through. That annotation-based runner is still available as
 
 ```sh
 go run ./tools/fetch-opengrep                  # download the pinned opengrep
-go build -tags gogrep_bundled -o gogrep .      # build with it embedded
+go build -tags gogrep_bundled ./cmd/gogrep     # build ./gogrep with it embedded
 go test -tags gogrep_bundled ./...             # unit and integration tests
 ```
 
@@ -501,10 +507,12 @@ output with [testdata/golden](testdata/golden). They are skipped with
 `-short`, and when the build finds no opengrep of the version pinned in
 `opengrep.json`.
 
-`go install github.com/odipar/gogrep@latest` builds gogrep without the
-opengrep binary: it has the same bundled rule sets, and runs the opengrep
-that `gogrep install-opengrep` puts in its cache, or else the `opengrep` on
-your `PATH`. To move to a newer opengrep, run
+`go install github.com/odipar/gogrep/cmd/gogrep@latest` builds gogrep
+without the opengrep binary: it has the same bundled rule sets, and runs the
+opengrep that `gogrep install-opengrep` puts in its cache, or else the
+`opengrep` on your `PATH`. Before v0.4.0 the command was the module root,
+`github.com/odipar/gogrep`, which is now a Go package; that path builds
+only v0.3.x and older. To move to a newer opengrep, run
 `go run ./tools/fetch-opengrep -pin <tag>` and commit `opengrep.json`. To
 move a rule set to another commit, change its `commit` in `opengrep.json`,
 run `go run ./tools/fetch-opengrep`, and commit `opengrep.json` with the

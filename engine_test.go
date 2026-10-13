@@ -1,4 +1,4 @@
-package engine
+package gogrep
 
 import (
 	"errors"
@@ -8,23 +8,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 )
 
-// testFiles are the files that the module root embeds, read from the
-// repository.
-var testFiles = sync.OnceValue(func() Files {
-	pins, err := os.ReadFile(filepath.Join("..", "..", "opengrep.json"))
-	if err != nil {
-		panic(err)
-	}
-	return Files{
-		Rules:  os.DirFS(filepath.Join("..", "..", "rules")),
-		Suites: os.DirFS(filepath.Join("..", "..", "suites")),
-		Pins:   pins,
-	}
-})
+// withPins returns gogrep's own files with pins in place of opengrep.json.
+func withPins(pins string) *source {
+	return newSource(sub(rulesFS, "rules"), sub(suitesFS, "suites"), []byte(pins))
+}
 
 // newEngine returns an Engine with cfg, a temporary CacheDir unless cfg
 // sets one, and an empty environment unless cfg sets one.
@@ -36,7 +26,7 @@ func newEngine(t *testing.T, cfg Config) *Engine {
 	if cfg.Env == nil {
 		cfg.Env = []string{}
 	}
-	e, err := New(cfg, testFiles())
+	e, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,11 +62,11 @@ const noExecRule = `rules:
 
 func TestNew(t *testing.T) {
 	t.Parallel()
-	if _, err := New(Config{CacheDir: "cache"}, testFiles()); err == nil || err.Error() != "Config.CacheDir cache is not an absolute path" {
+	if _, err := New(Config{CacheDir: "cache"}); err == nil || err.Error() != "Config.CacheDir cache is not an absolute path" {
 		t.Errorf("New with a relative CacheDir = %v, want an error", err)
 	}
 
-	e, err := New(Config{}, testFiles())
+	e, err := New(Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +79,7 @@ func TestNew(t *testing.T) {
 	}
 
 	env := []string{"A=1"}
-	e, err = New(Config{CacheDir: t.TempDir(), Env: env}, testFiles())
+	e, err = New(Config{CacheDir: t.TempDir(), Env: env})
 	env[0] = "A=2"
 	if err != nil || !slices.Equal(e.env, []string{"A=1"}) {
 		t.Errorf("Engine.env = %q, %v; want New's copy of Config.Env", e.env, err)

@@ -1,4 +1,4 @@
-package gogrep
+package main
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/odipar/gogrep/internal/engine"
+	"github.com/odipar/gogrep"
 )
 
 // A testReport prints the report of gogrep test: how many tests run, then
@@ -32,7 +32,7 @@ func (p *testReport) start() {
 // written or removed on stderr, then a status line, then the diff of a test
 // whose results differ from expected.txt, or why it failed, indented, and
 // with showOutput the opengrep command line and stderr.
-func (p *testReport) add(v *engine.TestResult) {
+func (p *testReport) add(v *gogrep.TestResult) {
 	p.reported++
 	for _, err := range v.FileErrors {
 		fmt.Fprintf(p.stderr, "gogrep: %v\n", err)

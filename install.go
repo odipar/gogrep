@@ -1,4 +1,4 @@
-package engine
+package gogrep
 
 import (
 	"cmp"
@@ -65,7 +65,7 @@ func (e *Engine) InstallOpengrep(ctx context.Context, opts *InstallOptions) (*Op
 	if len(e.cfg.EmbeddedOpengrep) > 0 {
 		return e.Opengrep(ctx)
 	}
-	pins, err := e.pins()
+	pins, err := e.src.pins()
 	if err != nil {
 		return nil, err
 	}

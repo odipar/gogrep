@@ -1,4 +1,4 @@
-package engine
+package gogrep
 
 import (
 	"errors"
@@ -51,7 +51,7 @@ func (e *Engine) PruneCache(opts *PruneOptions) error {
 	if e.cacheErr != nil {
 		return e.cacheErr
 	}
-	pins, err := e.pins()
+	pins, err := e.src.pins()
 	if err != nil {
 		return err
 	}

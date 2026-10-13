@@ -1,4 +1,4 @@
-package engine
+package gogrep
 
 import (
 	"bytes"
@@ -35,12 +35,12 @@ func requireOpengrep(t *testing.T) *Engine {
 		t.Skip("runs opengrep")
 	}
 	realOnce.Do(func() {
-		e, err := New(Config{EmbeddedOpengrep: bundle.Binary(), AllowUnpinned: true}, testFiles())
+		e, err := New(Config{EmbeddedOpengrep: bundle.Binary(), AllowUnpinned: true})
 		if err != nil {
 			realSkip = err.Error()
 			return
 		}
-		pins, err := e.pins()
+		pins, err := e.src.pins()
 		if err != nil {
 			realSkip = err.Error()
 			return
@@ -71,7 +71,7 @@ func requireOpengrep(t *testing.T) *Engine {
 // and returns the directory.
 func copyProject(t *testing.T, files map[string]string) string {
 	t.Helper()
-	dir, src := t.TempDir(), filepath.Join("..", "..", "testdata", "project")
+	dir, src := t.TempDir(), filepath.Join("testdata", "project")
 	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -102,7 +102,7 @@ func copyProject(t *testing.T, files map[string]string) string {
 // rewrites the file with -update.
 func checkGolden(t *testing.T, name string, data []byte) {
 	t.Helper()
-	file := filepath.Join("..", "..", "testdata", "golden", name)
+	file := filepath.Join("testdata", "golden", name)
 	if *update {
 		if err := os.WriteFile(file, data, 0o600); err != nil {
 			t.Fatal(err)

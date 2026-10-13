@@ -1,6 +1,6 @@
 //go:build unix
 
-package engine
+package gogrep
 
 import (
 	"errors"

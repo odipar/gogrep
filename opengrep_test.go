@@ -1,4 +1,4 @@
-package engine
+package gogrep
 
 import (
 	"context"
@@ -18,10 +18,8 @@ var fakeOpengrep = []byte("#!/bin/sh\necho 1.30.2\n")
 
 // pinned returns the files with opengrep.json pinning sum as this
 // platform's opengrep.
-func pinned(sum string) Files {
-	f := testFiles()
-	f.Pins = []byte(`{"version": "v1.30.2", "assets": {"` + runtime.GOOS + "/" + runtime.GOARCH + `": {"name": "opengrep_test", "sha256": "` + sum + `"}}}`)
-	return f
+func pinned(sum string) *source {
+	return withPins(`{"version": "v1.30.2", "assets": {"` + runtime.GOOS + "/" + runtime.GOARCH + `": {"name": "opengrep_test", "sha256": "` + sum + `"}}}`)
 }
 
 // newPinnedEngine returns an Engine whose opengrep.json pins fakeOpengrep.
@@ -30,7 +28,7 @@ func newPinnedEngine(t *testing.T, cfg Config) *Engine {
 	if cfg.CacheDir == "" {
 		cfg.CacheDir = t.TempDir()
 	}
-	e, err := New(cfg, pinned(opengrep.SHA256(fakeOpengrep)))
+	e, err := newFrom(cfg, pinned(opengrep.SHA256(fakeOpengrep)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,11 +89,11 @@ func TestOpengrepErrors(t *testing.T) {
 	}
 
 	for _, p := range []string{filepath.Join("bin", "opengrep"), "./opengrep"} {
-		if _, err := New(Config{Opengrep: p}, testFiles()); err == nil || err.Error() != "Config.Opengrep "+p+" is a relative path" {
+		if _, err := New(Config{Opengrep: p}); err == nil || err.Error() != "Config.Opengrep "+p+" is a relative path" {
 			t.Errorf("New with Opengrep %s = %v, want an error", p, err)
 		}
 	}
-	if _, err := New(Config{Opengrep: "opengrep-1.30"}, testFiles()); err != nil {
+	if _, err := New(Config{Opengrep: "opengrep-1.30"}); err != nil {
 		t.Errorf("New with a bare name = %v, want no error", err)
 	}
 
@@ -119,9 +117,8 @@ func TestOpengrepErrors(t *testing.T) {
 		t.Errorf("Opengrep without opengrep = %v\nwant %s", err, text)
 	}
 
-	otherPlatform := testFiles()
-	otherPlatform.Pins = []byte(`{"version": "v1.30.2", "assets": {"plan9/amd64": {"name": "opengrep", "sha256": "` + sum + `"}}}`)
-	e, err := New(Config{CacheDir: cache, EmbeddedOpengrep: fakeOpengrep}, otherPlatform)
+	otherPlatform := withPins(`{"version": "v1.30.2", "assets": {"plan9/amd64": {"name": "opengrep", "sha256": "` + sum + `"}}}`)
+	e, err := newFrom(Config{CacheDir: cache, EmbeddedOpengrep: fakeOpengrep}, otherPlatform)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,9 +127,7 @@ func TestOpengrepErrors(t *testing.T) {
 	}
 
 	for _, pins := range []string{"", `{"version": "v1.30.2", "assets": {"` + runtime.GOOS + "/" + runtime.GOARCH + `": {"name": "opengrep", "sha256": "0123"}}}`} {
-		files := testFiles()
-		files.Pins = []byte(pins)
-		e, err := New(Config{CacheDir: cache}, files)
+		e, err := newFrom(Config{CacheDir: cache}, withPins(pins))
 		if err != nil {
 			t.Fatal(err)
 		}

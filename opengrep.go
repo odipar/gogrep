@@ -1,4 +1,4 @@
-package engine
+package gogrep
 
 import (
 	"context"
@@ -65,7 +65,7 @@ func (e *Engine) find(ctx context.Context) (*OpengrepInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	pins, err := e.pins()
+	pins, err := e.src.pins()
 	if err != nil {
 		return nil, &noOpengrep{err}
 	}

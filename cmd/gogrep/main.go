@@ -1,6 +1,6 @@
-// Package gogrep implements the gogrep command, a wrapper around the
-// opengrep binary; the main package at the module root only calls Main.
-package gogrep
+// Command gogrep scans source code with opengrep and gogrep's rule sets. It is
+// a thin layer over package github.com/odipar/gogrep.
+package main
 
 import (
 	"context"
@@ -12,30 +12,22 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/odipar/gogrep"
 	"github.com/odipar/gogrep/internal/bundle"
-	"github.com/odipar/gogrep/internal/engine"
 )
 
-// Assets are the files gogrep embeds from the module root, which go:embed
-// cannot reach from this package.
-type Assets = engine.Files
-
-// Main runs gogrep with args (without the program name) on the process's
-// stdio and returns its exit code.
-func Main(args []string, a Assets) int {
-	return run(args, a, os.Stdout, os.Stderr)
-}
+func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 // A cli is one run of gogrep, in the current directory.
 type cli struct {
 	stdout, stderr io.Writer
 	dir            string // the current directory, where gogrep's project is
-	eng            *engine.Engine
+	eng            *gogrep.Engine
 }
 
 // newCLI returns a cli that writes to stdout and stderr, for the current
 // directory.
-func newCLI(a Assets, stdout, stderr io.Writer) (*cli, error) {
+func newCLI(stdout, stderr io.Writer) (*cli, error) {
 	dir, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -44,11 +36,11 @@ func newCLI(a Assets, stdout, stderr io.Writer) (*cli, error) {
 	if err != nil {
 		return nil, err
 	}
-	eng, err := engine.New(engine.Config{
+	eng, err := gogrep.New(gogrep.Config{
 		Opengrep:         bin,
 		EmbeddedOpengrep: bundle.Binary(),
 		AllowUnpinned:    true, // gogrep has always run any opengrep on $PATH
-	}, a)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -58,8 +50,8 @@ func newCLI(a Assets, stdout, stderr io.Writer) (*cli, error) {
 // run runs gogrep with args and returns its exit code. `gogrep opengrep
 // <args>` runs opengrep with args verbatim, gogrep's own flags included;
 // `gogrep install-opengrep` takes none of them either.
-func run(args []string, a Assets, stdout, stderr io.Writer) int {
-	c, err := newCLI(a, stdout, stderr)
+func run(args []string, stdout, stderr io.Writer) int {
+	c, err := newCLI(stdout, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "gogrep: %v\n", err)
 		return 2

@@ -1,8 +1,13 @@
-// Package engine is gogrep's Go API while it is being built: step 18 of
-// docs/design/library-api.md moves it to the module root as package gogrep.
-// Until then, New takes the files that the module root embeds as an
-// argument.
-package engine
+// Package gogrep scans source trees with opengrep and gogrep's pinned rule
+// sets, selected with CodeQL-style query suites under stable rule ids, and
+// returns the results as SARIF and as typed findings. The gogrep command is
+// a thin layer over it.
+//
+// The package documentation covers how opengrep is obtained, the offline
+// guarantee, concurrency and memory, cancellation, untrusted repositories,
+// the files gogrep writes, what it reads from the process, stability and
+// licensing.
+package gogrep
 
 import (
 	"fmt"
@@ -36,12 +41,36 @@ const (
 // testsDir is the directory of a rule set that holds its rule test fixtures.
 const testsDir = "test"
 
-// Files are the files that the gogrep module embeds at its root, which
-// go:embed cannot reach from this package.
-type Files struct {
-	Rules  fs.FS  // gogrep's own rule set, "gogrep"
-	Suites fs.FS  // the built-in suites, as <name>.yaml files
-	Pins   []byte // opengrep.json
+// A source is where an Engine finds gogrep's own files: the rule set
+// "gogrep", the built-in suites and opengrep.json, the first and last parsed
+// once.
+type source struct {
+	suites   fs.FS                         // the built-in suites, as <name>.yaml files
+	ownRules func() ([]*rules.Rule, error) // the "gogrep" rule set
+	pins     func() (*pin.Pins, error)     // opengrep.json
+}
+
+// newSource returns the source of the rule set in rulesFS, the suites in
+// suitesFS and the pins in pinJSON.
+func newSource(rulesFS, suitesFS fs.FS, pinJSON []byte) *source {
+	return &source{
+		suites: suitesFS,
+		ownRules: sync.OnceValues(func() ([]*rules.Rule, error) {
+			set, err := rules.FromFS(rulesFS, testsDir)
+			if err != nil {
+				return nil, err
+			}
+			parsed, err := parse(map[string]rules.Set{"gogrep": set})
+			return parsed["gogrep"], err
+		}),
+		pins: sync.OnceValues(func() (*pin.Pins, error) {
+			p, err := pin.Parse(pinJSON)
+			if err != nil {
+				return nil, fmt.Errorf("opengrep.json: %w", err)
+			}
+			return p, nil
+		}),
+	}
 }
 
 // A Config configures an Engine. The zero Config is ready to use: opengrep is
@@ -81,12 +110,20 @@ type Config struct {
 	CacheDir string
 
 	// Env is the environment opengrep runs in, as in exec.Cmd.Env. nil
-	// means os.Environ() as of New.
+	// means os.Environ() as of New. Scan and Test remove every SEMGREP_*
+	// and OPENGREP_* variable from it and set SEMGREP_LOG_FILE to a file of
+	// their own; Command does neither. All add LC_ALL=C.UTF-8 unless Env
+	// itself selects a UTF-8 locale (PYTHONUTF8=1 on Windows), since
+	// opengrep crashes on non-ASCII rules otherwise, and on Linux and macOS
+	// set XDG_CACHE_HOME to the runtime directory in CacheDir. opengrep
+	// runs git, which it finds through Env's PATH.
 	Env []string
 
-	// Logger receives gogrep's own records at Debug and Info level. nil
-	// discards them. The package never changes slog's default logger, and
-	// opengrep's own output never goes to Logger.
+	// Logger receives gogrep's own records at Debug and Info level: which
+	// opengrep it found, extraction, downloads, runtime preparation, lock
+	// waits and each opengrep command line. nil discards them. The package
+	// never changes slog's default logger, and opengrep's own output never
+	// goes to Logger.
 	Logger *slog.Logger
 }
 
@@ -97,28 +134,35 @@ type Config struct {
 // reads or changes the process's working directory, signal dispositions or
 // standard streams, and none reads environment variables beyond the
 // defaults Config documents. Every directory argument must be absolute.
+// Methods that run opengrep take a context: when it is done, they kill the
+// opengrep processes they started, with every process those started, and
+// return an error that wraps ctx.Err().
 type Engine struct {
 	cfg      Config
 	cacheDir string
 	cacheErr error // why there is no cacheDir
 	env      []string
 	log      *slog.Logger
-	files    Files
+	src      *source
 
-	ownRules    func() ([]*rules.Rule, error) // the "gogrep" rule set, parsed once
-	pins        func() (*pin.Pins, error)     // files.Pins, parsed once
-	embeddedSum func() string                 // the SHA-256 of cfg.EmbeddedOpengrep, computed once
+	embeddedSum func() string // the SHA-256 of cfg.EmbeddedOpengrep, computed once
 }
 
-// New returns an Engine for cfg and files. It runs nothing and reads no
-// file: opengrep is found, and gogrep's built-in rule sets are parsed (about
-// 0.13 s, once per process), when first needed. It returns an error only for
-// an invalid cfg, such as a relative CacheDir or a relative Opengrep path.
-func New(cfg Config, files Files) (*Engine, error) {
+// New returns an Engine for cfg. It runs nothing and reads no file: opengrep
+// is found, and gogrep's built-in rule sets are parsed (about 0.13 s, once
+// per process), when first needed. It returns an error only for an invalid
+// cfg, such as a relative CacheDir or a relative Opengrep path.
+func New(cfg Config) (*Engine, error) {
+	return newFrom(cfg, builtin)
+}
+
+// newFrom returns an Engine for cfg that reads gogrep's own files from
+// src.
+func newFrom(cfg Config, src *source) (*Engine, error) {
 	if p := cfg.Opengrep; p != "" && !filepath.IsAbs(p) && (strings.ContainsAny(p, "/"+string(filepath.Separator)) || filepath.VolumeName(p) != "") {
 		return nil, fmt.Errorf("Config.Opengrep %s is a relative path", p)
 	}
-	e := &Engine{cfg: cfg, cacheDir: cfg.CacheDir, env: slices.Clone(cfg.Env), log: cfg.Logger, files: files}
+	e := &Engine{cfg: cfg, cacheDir: cfg.CacheDir, env: slices.Clone(cfg.Env), log: cfg.Logger, src: src}
 	switch {
 	case e.cacheDir == "":
 		cache, err := os.UserCacheDir()
@@ -136,21 +180,6 @@ func New(cfg Config, files Files) (*Engine, error) {
 	if e.log == nil {
 		e.log = slog.New(slog.DiscardHandler)
 	}
-	e.ownRules = sync.OnceValues(func() ([]*rules.Rule, error) {
-		set, err := rules.FromFS(files.Rules, testsDir)
-		if err != nil {
-			return nil, err
-		}
-		parsed, err := parse(map[string]rules.Set{"gogrep": set})
-		return parsed["gogrep"], err
-	})
-	e.pins = sync.OnceValues(func() (*pin.Pins, error) {
-		p, err := pin.Parse(files.Pins)
-		if err != nil {
-			return nil, fmt.Errorf("opengrep.json: %w", err)
-		}
-		return p, nil
-	})
 	e.embeddedSum = sync.OnceValue(func() string { return opengrep.SHA256(cfg.EmbeddedOpengrep) })
 	return e, nil
 }
@@ -224,7 +253,7 @@ func (e *Engine) loadEnv(dir string, noProject bool) (*suite.Env, error) {
 	if err != nil {
 		return nil, err
 	}
-	own, err := e.ownRules()
+	own, err := e.src.ownRules()
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +303,7 @@ func (e *Engine) loader(dir string, noProject bool) func(name string) (*suite.Su
 				}
 			}
 		}
-		if data, err := fs.ReadFile(e.files.Suites, name+".yaml"); err == nil {
+		if data, err := fs.ReadFile(e.src.suites, name+".yaml"); err == nil {
 			return parseSuite(name, data)
 		}
 		return nil, &SelectionError{Kind: "suite", Value: name, Err: ErrUnknownSuite}

@@ -1,4 +1,4 @@
-package gogrep
+package main
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/odipar/gogrep/internal/engine"
+	"github.com/odipar/gogrep"
 )
 
 // installUsage is the help text of gogrep install-opengrep.
@@ -26,7 +26,7 @@ Exit codes: 0 installed, 1 download or verification failed, 2 usage error,
 // installOpengrep implements gogrep install-opengrep and returns its exit
 // code.
 func (c *cli) installOpengrep(args []string) int {
-	opts := &engine.InstallOptions{}
+	opts := &gogrep.InstallOptions{}
 	for i := 0; i < len(args); i++ {
 		name, val, hasVal := strings.Cut(args[i], "=")
 		var field *string

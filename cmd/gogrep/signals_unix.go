@@ -1,6 +1,6 @@
 //go:build unix
 
-package gogrep
+package main
 
 import (
 	"os"

@@ -36,7 +36,7 @@ jobs:
             [ "$os" = windows ] && ext=.exe
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
               go build -tags "$tags" -trimpath -ldflags "-s -w" \
-              -o "dist/$name$ext" .
+              -o "dist/$name$ext" ./cmd/gogrep
           done
           cp LICENSE NOTICE.md dist/
           (cd dist && sha256sum * > checksums.txt)

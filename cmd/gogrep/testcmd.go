@@ -1,4 +1,4 @@
-package gogrep
+package main
 
 import (
 	"errors"
@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odipar/gogrep/internal/engine"
+	"github.com/odipar/gogrep"
 )
 
 // testUsage is the help text of gogrep test.
@@ -111,14 +111,14 @@ func (c *cli) runTest(args []string, sel selection) int {
 // runFixtures runs the tests that a and sel select, prints the report and
 // returns the exit code.
 func (c *cli) runFixtures(a testArgs, sel selection) int {
-	opts := &engine.TestOptions{Selection: sel.Selection, Paths: a.paths, Jobs: a.threads, Learn: a.learn, KeepSARIF: a.keepSARIF}
+	opts := &gogrep.TestOptions{Selection: sel.Selection, Paths: a.paths, Jobs: a.threads, Learn: a.learn, KeepSARIF: a.keepSARIF}
 	if sel.empty() {
 		// It selects no rules, where the zero Selection selects every
 		// one: so does a Filter without values.
-		opts.Selection = engine.Selection{Filters: []engine.Filter{{Field: "id"}}}
+		opts.Selection = gogrep.Selection{Filters: []gogrep.Filter{{Field: "id"}}}
 	}
 	report := &testReport{stdout: c.stdout, stderr: c.stderr, showOutput: a.showOutput}
-	opts.Progress = func(_, total int, r *engine.TestResult) {
+	opts.Progress = func(_, total int, r *gogrep.TestResult) {
 		if r == nil {
 			report.total = total
 			report.start()

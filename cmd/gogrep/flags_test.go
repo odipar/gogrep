@@ -1,4 +1,4 @@
-package gogrep
+package main
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odipar/gogrep/internal/engine"
+	"github.com/odipar/gogrep"
 )
 
 const noExecRule = `rules:
@@ -57,7 +57,7 @@ func TestWithRules(t *testing.T) {
 	command := func(t *testing.T, args []string, sel selection) []string {
 		t.Helper()
 		args, inject := withRules(args, sel)
-		opts := &engine.CommandOptions{}
+		opts := &gogrep.CommandOptions{}
 		if inject {
 			opts.Selection = &sel.Selection
 		}
@@ -116,7 +116,7 @@ func TestWithRules(t *testing.T) {
 }
 
 func TestGogrepFlags(t *testing.T) {
-	filter := func(field string, values ...string) engine.Filter { return engine.Filter{Field: field, Values: values} }
+	filter := func(field string, values ...string) gogrep.Filter { return gogrep.Filter{Field: field, Values: values} }
 	tests := []struct {
 		args   []string
 		rest   []string
@@ -125,17 +125,17 @@ func TestGogrepFlags(t *testing.T) {
 	}{
 		{nil, nil, selection{}, ""},
 		{[]string{"scan", "--rule", "no-exec-command", "."}, []string{"scan", "."},
-			selection{engine.Selection{Rules: []string{"no-exec-command"}}, true}, ""},
+			selection{gogrep.Selection{Rules: []string{"no-exec-command"}}, true}, ""},
 		{[]string{"--rule=no-exec-command,todo-marker"}, nil,
-			selection{engine.Selection{Rules: []string{"no-exec-command", "todo-marker"}}, true}, ""},
+			selection{gogrep.Selection{Rules: []string{"no-exec-command", "todo-marker"}}, true}, ""},
 		{[]string{"--gogrep-lang", "go"}, nil,
-			selection{engine.Selection{Filters: []engine.Filter{filter("languages", "go")}}, false}, ""},
+			selection{gogrep.Selection{Filters: []gogrep.Filter{filter("languages", "go")}}, false}, ""},
 		{[]string{"--suite", "all", "--gogrep-lang=generic", "--gogrep-lang", "go, c", "--gogrep-category=security", "--gogrep-ruleset", "project"}, nil,
-			selection{engine.Selection{Suites: []string{"all"}, Filters: []engine.Filter{
+			selection{gogrep.Selection{Suites: []string{"all"}, Filters: []gogrep.Filter{
 				filter("languages", "generic"), filter("languages", "go", "c"), filter("category", "security"), filter("ruleset", "project"),
 			}}, true}, ""},
 		{[]string{"--suite="}, nil, selection{explicit: true}, ""},
-		{[]string{"--gogrep-lang="}, nil, selection{engine.Selection{Filters: []engine.Filter{filter("languages")}}, false}, ""},
+		{[]string{"--gogrep-lang="}, nil, selection{gogrep.Selection{Filters: []gogrep.Filter{filter("languages")}}, false}, ""},
 		{[]string{"--suite"}, nil, selection{}, "--suite needs a value"},
 		{[]string{"--gogrep-lang", "/(/"}, nil, selection{}, "--gogrep-lang: error parsing regexp: missing closing ): `(`"},
 	}

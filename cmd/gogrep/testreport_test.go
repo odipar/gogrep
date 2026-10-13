@@ -1,22 +1,22 @@
-package gogrep
+package main
 
 import (
 	"bytes"
 	"errors"
 	"testing"
 
-	"github.com/odipar/gogrep/internal/engine"
+	"github.com/odipar/gogrep"
 )
 
 // verdict returns v as the result of a test of the fixture name.
-func verdict(name string, v engine.TestResult) *engine.TestResult {
+func verdict(name string, v gogrep.TestResult) *gogrep.TestResult {
 	v.Name = name
 	return &v
 }
 
 // printReport reports verdicts, as many as there are tests, and returns the
 // exit code and output.
-func printReport(verdicts []*engine.TestResult, showOutput bool) (code int, stdout, stderr string) {
+func printReport(verdicts []*gogrep.TestResult, showOutput bool) (code int, stdout, stderr string) {
 	var out, errb bytes.Buffer
 	r := &testReport{stdout: &out, stderr: &errb, total: len(verdicts), showOutput: showOutput}
 	r.start()
@@ -28,18 +28,18 @@ func printReport(verdicts []*engine.TestResult, showOutput bool) (code int, stdo
 }
 
 func TestTestReport(t *testing.T) {
-	verdicts := []*engine.TestResult{
-		verdict("test/a-pass", engine.TestResult{}),
-		verdict("test/b-diff", engine.TestResult{Stage: engine.StageResult, Diff: "--- expected\n+++ actual\n@@ -1,1 +1,1 @@\n-| a.go:1:1:1:2 | old |\n+| a.go:1:1:1:2 | new |\n"}),
-		verdict("test/c-missing", engine.TestResult{Stage: engine.StageResult, MissingExpected: true, Diff: "--- expected\n+++ actual\n@@ -0,0 +1,1 @@\n+| a.go:1:1:1:2 | m |\n"}),
-		verdict("test/d-setup", engine.TestResult{Stage: engine.StageSetup, Details: []string{"no code samples"}}),
-		verdict("test/e-rule", engine.TestResult{Stage: engine.StageRule, Details: []string{`rule reference "x" matches no rule`}}),
-		verdict("test/f-invalid", engine.TestResult{Stage: engine.StageRule, Details: []string{
+	verdicts := []*gogrep.TestResult{
+		verdict("test/a-pass", gogrep.TestResult{}),
+		verdict("test/b-diff", gogrep.TestResult{Stage: gogrep.StageResult, Diff: "--- expected\n+++ actual\n@@ -1,1 +1,1 @@\n-| a.go:1:1:1:2 | old |\n+| a.go:1:1:1:2 | new |\n"}),
+		verdict("test/c-missing", gogrep.TestResult{Stage: gogrep.StageResult, MissingExpected: true, Diff: "--- expected\n+++ actual\n@@ -0,0 +1,1 @@\n+| a.go:1:1:1:2 | m |\n"}),
+		verdict("test/d-setup", gogrep.TestResult{Stage: gogrep.StageSetup, Details: []string{"no code samples"}}),
+		verdict("test/e-rule", gogrep.TestResult{Stage: gogrep.StageRule, Details: []string{`rule reference "x" matches no rule`}}),
+		verdict("test/f-invalid", gogrep.TestResult{Stage: gogrep.StageRule, Details: []string{
 			"InvalidRuleSchemaError: One of these properties is missing: 'message'",
 			"SemgrepError: invalid configuration file found (1 configs were invalid)",
 		}}),
-		verdict("test/g-run", engine.TestResult{Stage: engine.StageRun, Details: []string{"SemgrepError: File not found: missing.go", "opengrep exited with code 2", "> oops"}}),
-		verdict("test/h-empty", engine.TestResult{}),
+		verdict("test/g-run", gogrep.TestResult{Stage: gogrep.StageRun, Details: []string{"SemgrepError: File not found: missing.go", "opengrep exited with code 2", "> oops"}}),
+		verdict("test/h-empty", gogrep.TestResult{}),
 	}
 	const want = `Executing 8 tests.
 [1/8] PASSED test/a-pass
@@ -81,10 +81,10 @@ Cannot find expected.txt.
 }
 
 func TestTestReportLearned(t *testing.T) {
-	verdicts := []*engine.TestResult{
-		verdict("test/a-pass", engine.TestResult{}),
-		verdict("test/b-diff", engine.TestResult{Learned: true, Diff: "--- expected\n+++ actual\n@@ -1,1 +1,1 @@\n-| a.go:1:1:1:2 | old |\n+| a.go:1:1:1:2 | new |\n"}),
-		verdict("test/c-missing", engine.TestResult{Learned: true, MissingExpected: true, Diff: "--- expected\n+++ actual\n@@ -0,0 +1,1 @@\n+| a.go:1:1:1:2 | m |\n"}),
+	verdicts := []*gogrep.TestResult{
+		verdict("test/a-pass", gogrep.TestResult{}),
+		verdict("test/b-diff", gogrep.TestResult{Learned: true, Diff: "--- expected\n+++ actual\n@@ -1,1 +1,1 @@\n-| a.go:1:1:1:2 | old |\n+| a.go:1:1:1:2 | new |\n"}),
+		verdict("test/c-missing", gogrep.TestResult{Learned: true, MissingExpected: true, Diff: "--- expected\n+++ actual\n@@ -0,0 +1,1 @@\n+| a.go:1:1:1:2 | m |\n"}),
 	}
 	const want = `Executing 3 tests.
 [1/3] PASSED test/a-pass
@@ -112,9 +112,9 @@ All 3 tests passed (2 learned).
 
 func TestTestReportShowOutput(t *testing.T) {
 	cmd := []string{"/opt/open grep/opengrep", "scan", "--config", "/cache/gogrep/selections/0123456789abcdef.yaml", "--no-rewrite-rule-ids", "--sarif", "--disable-version-check", "--timeout", "0", "-j", "1", "--", "./a.go"}
-	verdicts := []*engine.TestResult{
-		verdict("test/it's/a", engine.TestResult{Command: cmd, Stderr: []byte("\n  \nScanning 1 file.\r\n\nRan 1 rule.  \n\n")}),
-		verdict("test/it's/b", engine.TestResult{Stage: engine.StageSetup, Details: []string{"no code samples"}}),
+	verdicts := []*gogrep.TestResult{
+		verdict("test/it's/a", gogrep.TestResult{Command: cmd, Stderr: []byte("\n  \nScanning 1 file.\r\n\nRan 1 rule.  \n\n")}),
+		verdict("test/it's/b", gogrep.TestResult{Stage: gogrep.StageSetup, Details: []string{"no code samples"}}),
 	}
 	const want = `Executing 2 tests.
 [1/2] PASSED test/it's/a
@@ -135,9 +135,9 @@ func TestTestReportShowOutput(t *testing.T) {
 // A fixture file that could not be written or removed is reported on
 // stderr, before the test, and makes the exit code 2.
 func TestTestReportFileErrors(t *testing.T) {
-	verdicts := []*engine.TestResult{
-		verdict("test/a", engine.TestResult{FileErrors: []error{errors.New("writing test/a/expected.txt: denied"), errors.New("writing test/a/actual.txt: denied")}}),
-		verdict("test/b", engine.TestResult{}),
+	verdicts := []*gogrep.TestResult{
+		verdict("test/a", gogrep.TestResult{FileErrors: []error{errors.New("writing test/a/expected.txt: denied"), errors.New("writing test/a/actual.txt: denied")}}),
+		verdict("test/b", gogrep.TestResult{}),
 	}
 	const want = "gogrep: writing test/a/expected.txt: denied\ngogrep: writing test/a/actual.txt: denied\n"
 	if code, stdout, stderr := printReport(verdicts, false); code != 2 || stderr != want || stdout != "Executing 2 tests.\n[1/2] PASSED test/a\n[2/2] PASSED test/b\nAll 2 tests passed.\n" {
@@ -149,7 +149,7 @@ func TestTestReportInterrupted(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	r := &testReport{stdout: &stdout, stderr: &stderr, total: 2}
 	r.start()
-	r.add(verdict("test/a", engine.TestResult{}))
+	r.add(verdict("test/a", gogrep.TestResult{}))
 	if code := r.interrupted(); code != 130 || stdout.String() != "Executing 2 tests.\n[1/2] PASSED test/a\n" || stderr.String() != "gogrep: interrupted\n" {
 		t.Errorf("report, interrupted = %d, %q, %q; want 130, the first test, %q", code, &stdout, &stderr, "gogrep: interrupted\n")
 	}

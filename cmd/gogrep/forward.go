@@ -1,4 +1,4 @@
-package gogrep
+package main
 
 import (
 	"bytes"
@@ -11,7 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/odipar/gogrep/internal/engine"
+	"github.com/odipar/gogrep"
 	"github.com/odipar/gogrep/internal/sarif"
 )
 
@@ -23,7 +23,7 @@ import (
 // gogrep's process group and stdin, as gogrep opengrep does.
 func (c *cli) forward(args []string, sel selection) int {
 	args, inject := withRules(args, sel)
-	opts := &engine.CommandOptions{}
+	opts := &gogrep.CommandOptions{}
 	if inject {
 		if sel.empty() {
 			fmt.Fprintf(c.stderr, "gogrep: %v\n", errNoRules)
@@ -93,7 +93,7 @@ func (c *cli) checkSARIF(code int, out []byte, toStdout bool, files []string) in
 // verbatim, on gogrep's streams, and its exit code is gogrep's.
 func (c *cli) passThrough(args []string) int {
 	ctx := context.Background()
-	cmd, code := c.command(ctx, &engine.CommandOptions{Foreground: true}, args)
+	cmd, code := c.command(ctx, &gogrep.CommandOptions{Foreground: true}, args)
 	if cmd == nil {
 		return code
 	}
@@ -105,7 +105,7 @@ func (c *cli) passThrough(args []string) int {
 // Engine.Command does. When it cannot, command says why, unless ctx is
 // done, and returns a nil Cmd and the exit code: 1 when there is no usable
 // opengrep, and 2 for a selection or setup error.
-func (c *cli) command(ctx context.Context, opts *engine.CommandOptions, args []string) (*engine.Cmd, int) {
+func (c *cli) command(ctx context.Context, opts *gogrep.CommandOptions, args []string) (*gogrep.Cmd, int) {
 	cmd, err := c.eng.Command(ctx, c.dir, opts, args...)
 	if err == nil {
 		return cmd, 0
@@ -113,8 +113,8 @@ func (c *cli) command(ctx context.Context, opts *engine.CommandOptions, args []s
 	if ctx.Err() == nil {
 		fmt.Fprintf(c.stderr, "gogrep: %v\n", explain(err))
 	}
-	var integrity *engine.IntegrityError
-	if errors.Is(err, engine.ErrNoOpengrep) || errors.As(err, &integrity) {
+	var integrity *gogrep.IntegrityError
+	if errors.Is(err, gogrep.ErrNoOpengrep) || errors.As(err, &integrity) {
 		return nil, 1
 	}
 	return nil, 2
@@ -124,13 +124,13 @@ func (c *cli) command(ctx context.Context, opts *engine.CommandOptions, args []s
 // A foreground cmd reads gogrep's stdin and shares gogrep's process group, so
 // a terminal's Ctrl-C reaches opengrep directly; gogrep then ignores SIGINT
 // and SIGTERM, to report opengrep's exit status.
-func (c *cli) runCmd(ctx context.Context, cmd *engine.Cmd, foreground bool) int {
+func (c *cli) runCmd(ctx context.Context, cmd *gogrep.Cmd, foreground bool) int {
 	if foreground {
 		cmd.Stdin = os.Stdin
 		signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
 	}
 	err := cmd.Run()
-	var exitErr *engine.ExitError
+	var exitErr *gogrep.ExitError
 	switch {
 	case err == nil:
 		return 0
