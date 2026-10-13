@@ -284,8 +284,9 @@ func loadSuite(name string) (*suite.Suite, error) {
 	return nil, fmt.Errorf("unknown suite %q; list them with: gogrep suites", name)
 }
 
-// listRules implements `gogrep rules`: print the rules a selection picks.
-func listRules(w io.Writer, sel selection) error {
+// listRules implements `gogrep rules`: print the rules a selection picks, and
+// their count to stderr.
+func listRules(w, stderr io.Writer, sel selection) error {
 	env, err := loadEnv()
 	if err != nil {
 		return err
@@ -310,9 +311,9 @@ func listRules(w io.Writer, sel selection) error {
 		return err
 	}
 	if len(rs) == 1 {
-		fmt.Fprintln(os.Stderr, "1 rule")
+		fmt.Fprintln(stderr, "1 rule")
 	} else {
-		fmt.Fprintf(os.Stderr, "%d rules\n", len(rs))
+		fmt.Fprintf(stderr, "%d rules\n", len(rs))
 	}
 	return nil
 }

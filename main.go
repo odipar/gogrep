@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -16,70 +17,95 @@ import (
 )
 
 func main() {
-	os.Exit(run(os.Args[1:]))
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string) int {
-	args, sel, err := gogrepFlags(args)
-	if err == nil && len(args) > 0 {
-		switch args[0] {
-		case "rules":
-			err = listRules(os.Stdout, sel)
-		case "suites":
-			err = listSuites(os.Stdout)
-		default:
-			args, err = withRules(args, sel)
-		}
+// run runs gogrep with args and returns its exit code. `gogrep opengrep
+// <args>` runs opengrep with args verbatim, gogrep's own flags included.
+func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "opengrep" {
+		return execOpengrep(args[1:], stdout, stderr)
 	}
+	args, sel, err := gogrepFlags(args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "gogrep: %v\n", err)
+		fmt.Fprintf(stderr, "gogrep: %v\n", err)
 		return 2
 	}
-	if len(args) > 0 && (args[0] == "rules" || args[0] == "suites") {
-		return 0
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	switch sub {
+	case "rules":
+		err = listRules(stdout, stderr, sel)
+	case "suites":
+		err = listSuites(stdout)
+	default:
+		return forward(args, sel, stdout, stderr)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "gogrep: %v\n", err)
+		return 2
+	}
+	return 0
+}
+
+// forward runs an opengrep command: a scan gets the selected rules (see
+// withRules), and the SARIF it writes is rebranded.
+func forward(args []string, sel selection, stdout, stderr io.Writer) int {
+	args, err := withRules(args, sel)
+	if err != nil {
+		fmt.Fprintf(stderr, "gogrep: %v\n", err)
+		return 2
 	}
 	sarifFiles, sarifStdout := sarifTargets(args)
+	out := stdout
+	var sarif bytes.Buffer
+	if sarifStdout {
+		out = &sarif
+	}
+	code := execOpengrep(args, out, stderr)
 
+	if sarifStdout {
+		data := sarif.Bytes()
+		if rebranded, err := rebrand(data); err == nil {
+			data = append(rebranded, '\n')
+		}
+		stdout.Write(data)
+	}
+	for _, f := range sarifFiles {
+		if err := rebrandFile(f); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(stderr, "gogrep: rewriting SARIF %s: %v\n", f, err)
+		}
+	}
+	return code
+}
+
+// execOpengrep runs opengrep with args, gogrep's stdin and the given stdout
+// and stderr, and returns its exit code.
+func execOpengrep(args []string, stdout, stderr io.Writer) int {
 	bin, err := opengrepBin()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "gogrep: %v\n", err)
+		fmt.Fprintf(stderr, "gogrep: %v\n", err)
 		return 1
 	}
 	cmd := exec.Command(bin, args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stdout, stderr
 	cmd.Env = utf8Env(os.Environ())
-	var stdout bytes.Buffer
-	if sarifStdout {
-		cmd.Stdout = &stdout
-	}
 
 	// The child shares our process group and receives Ctrl-C directly;
 	// keep the wrapper alive so it can report the child's exit status.
 	signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
 
-	code := 0
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
-			fmt.Fprintf(os.Stderr, "gogrep: %v\n", err)
+			fmt.Fprintf(stderr, "gogrep: %v\n", err)
 			return 1
 		}
-		code = exitErr.ExitCode()
+		return exitErr.ExitCode()
 	}
-
-	if sarifStdout {
-		out := stdout.Bytes()
-		if rebranded, err := rebrand(out); err == nil {
-			out = append(rebranded, '\n')
-		}
-		os.Stdout.Write(out)
-	}
-	for _, f := range sarifFiles {
-		if err := rebrandFile(f); err != nil && !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, "gogrep: rewriting SARIF %s: %v\n", f, err)
-		}
-	}
-	return code
+	return 0
 }
 
 // utf8Env makes opengrep read rule files as UTF-8: without a UTF-8 locale its
