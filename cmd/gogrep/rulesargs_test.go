@@ -1,6 +1,7 @@
 package gogrep
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -43,13 +44,29 @@ func isolateCache(t *testing.T) {
 	t.Setenv("LocalAppData", dir)   // Windows
 }
 
+// The command line that a scan runs opengrep with: gogrep's rules go right
+// after "scan" when the scan names no rules of its own.
 func TestWithRules(t *testing.T) {
-	isolateCache(t)
+	useFakeOpengrep(t, 0)
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"opengrep/gogrep/rules/go/no-exec-command.yaml": noExecRule})
 	t.Chdir(dir)
 	t.Setenv("SEMGREP_RULES", "")
 	c := newTestCLI(t)
+	// command returns the arguments of the opengrep that args run.
+	command := func(t *testing.T, args []string, sel selection) []string {
+		t.Helper()
+		args, inject := withRules(args, sel)
+		opts := &engine.CommandOptions{}
+		if inject {
+			opts.Selection = &sel.Selection
+		}
+		cmd, err := c.eng.Command(context.Background(), c.dir, opts, args...)
+		if err != nil {
+			t.Fatalf("Command: %v", err)
+		}
+		return cmd.Args[1:]
+	}
 
 	tests := []struct {
 		args []string
@@ -72,13 +89,10 @@ func TestWithRules(t *testing.T) {
 			if err != nil {
 				t.Fatalf("gogrepFlags: %v", err)
 			}
-			got, err := c.withRules(args, sel)
-			if err != nil {
-				t.Fatalf("withRules: %v", err)
-			}
+			got := command(t, args, sel)
 			if tt.want == nil {
 				if !slices.Equal(got, args) {
-					t.Errorf("withRules(%q) = %q, want it unchanged", args, got)
+					t.Errorf("opengrep args for %q = %q, want them unchanged", args, got)
 				}
 				return
 			}
@@ -87,7 +101,7 @@ func TestWithRules(t *testing.T) {
 				got[2] = "<abs config>"
 			}
 			if !slices.Equal(got, want) {
-				t.Errorf("withRules(%q) = %q, want %q", args, got, want)
+				t.Errorf("opengrep args for %q = %q, want %q", args, got, want)
 			}
 		})
 	}
@@ -95,8 +109,8 @@ func TestWithRules(t *testing.T) {
 	t.Run("SEMGREP_RULES", func(t *testing.T) {
 		t.Setenv("SEMGREP_RULES", "my-rules/")
 		args := []string{"scan", "."}
-		if got, err := c.withRules(args, selection{}); err != nil || !slices.Equal(got, args) {
-			t.Errorf("withRules(%q) = %q, %v; want it unchanged", args, got, err)
+		if got := command(t, args, selection{}); !slices.Equal(got, args) {
+			t.Errorf("opengrep args for %q = %q; want them unchanged", args, got)
 		}
 	})
 }

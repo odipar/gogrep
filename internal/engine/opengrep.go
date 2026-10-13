@@ -65,7 +65,7 @@ func (e *Engine) find(ctx context.Context) (*OpengrepInfo, error) {
 	}
 	pins, err := e.pins()
 	if err != nil {
-		return nil, err
+		return nil, &noOpengrep{err}
 	}
 	keys := pin.Keys(runtime.GOOS, runtime.GOARCH, musl())
 	f := &opengrep.Finder{Explicit: e.cfg.Opengrep, CacheDir: e.cacheDir, AllowUnpinned: e.cfg.AllowUnpinned}

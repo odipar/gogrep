@@ -46,8 +46,8 @@ type Cmd struct {
 }
 
 // Run starts c and waits for it. It returns nil when the process exits 0, an
-// *exec.ExitError when it exits non-zero, and ctx.Err() when ctx is done
-// before Run returns: a process killed on Windows exits with code 1, so once
+// *exec.ExitError when it exits non-zero, a *StartError when it cannot
+// start, and ctx.Err() when ctx is done before Run returns: a process killed on Windows exits with code 1, so once
 // ctx is done no exit status is trusted. When ctx is done, Run kills the
 // process as Foreground describes and returns within about a second. A Cmd
 // may be run again.
@@ -73,7 +73,7 @@ func (c *Cmd) Run(ctx context.Context) error {
 			return ctx.Err()
 		}
 		if retry == startRetries || !textBusy(err) {
-			return err
+			return &StartError{err}
 		}
 		t := time.NewTimer(backoff)
 		select {
@@ -97,3 +97,9 @@ func (c *Cmd) command(ctx context.Context) *exec.Cmd {
 	}
 	return cmd
 }
+
+// A StartError reports that a Cmd's process could not start.
+type StartError struct{ Err error }
+
+func (e *StartError) Error() string { return e.Err.Error() }
+func (e *StartError) Unwrap() error { return e.Err }

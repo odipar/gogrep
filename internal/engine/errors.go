@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var (
@@ -46,6 +47,29 @@ func (e *SelectionError) Error() string {
 }
 
 func (e *SelectionError) Unwrap() error { return e.Err }
+
+// An ExitError reports that opengrep exited with a non-zero code. gogrep
+// never passes --error, so findings alone never cause one. opengrep's codes
+// include 2 (fatal error), 4 (invalid pattern), 5 (invalid YAML), 7 (invalid
+// rule or missing config) and 8 (unknown language).
+type ExitError struct {
+	Code   int
+	Stderr []byte // the last 64 KiB of opengrep's stderr; nil from Cmd.Run
+}
+
+// Error returns "opengrep exited with code 7" and, if any, ": " and
+// Stderr's last non-empty line.
+func (e *ExitError) Error() string {
+	msg := fmt.Sprintf("opengrep exited with code %d", e.Code)
+	lines := strings.Split(strings.TrimSpace(string(e.Stderr)), "\n")
+	if line := strings.TrimSpace(lines[len(lines)-1]); line != "" {
+		msg += ": " + line
+	}
+	return msg
+}
+
+// ExitCode returns e.Code.
+func (e *ExitError) ExitCode() int { return e.Code }
 
 // An IntegrityError reports an opengrep executable whose SHA-256 is not the
 // pinned one where gogrep requires it to be: Config.EmbeddedOpengrep, a

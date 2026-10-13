@@ -3,8 +3,6 @@ package gogrep
 import (
 	"errors"
 	"fmt"
-	"os"
-	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -71,54 +69,6 @@ func gogrepFlags(args []string) (rest []string, sel selection, err error) {
 		}
 	}
 	return rest, sel, nil
-}
-
-// withRules points a scan at the selected bundled rules when it names no
-// rules itself (no --config, -e/--pattern or $SEMGREP_RULES), when it uses
-// --config bundled, or when --suite or --rule is given. The selection goes to
-// opengrep as one generated config with stable rule ids, the scan makes no
-// version check, whatever $OPENGREP_ENABLE_VERSION_CHECK says, and it skips
-// the project's rule test fixtures: a project .semgrepignore replaces
-// opengrep's default exclusion of test/ directories.
-func (c *cli) withRules(args []string, sel selection) ([]string, error) {
-	if len(args) == 0 || args[0] != "scan" {
-		return args, nil
-	}
-
-	var out []string
-	explicit, useBundled := os.Getenv("SEMGREP_RULES") != "", sel.explicit
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-c" || a == "-f" || a == "--config":
-			explicit = true
-			if i+1 < len(args) && args[i+1] == bundledConfig {
-				useBundled = true
-				i++
-				continue
-			}
-		case a == "--config="+bundledConfig:
-			explicit, useBundled = true, true
-			continue
-		case strings.HasPrefix(a, "--config=") || a == "-e" || a == "--pattern" || strings.HasPrefix(a, "--pattern="):
-			explicit = true
-		}
-		out = append(out, a)
-	}
-	if explicit && !useBundled {
-		return args, nil
-	}
-
-	if sel.empty() {
-		return nil, errNoRules
-	}
-	file, err := c.eng.SelectionFile(c.dir, sel.Selection, false)
-	if err != nil {
-		return nil, err
-	}
-	// Insert right after "scan": after a user's "--" they would be targets.
-	own := []string{"--config", file, "--no-rewrite-rule-ids", "--disable-version-check", "--exclude=" + engine.ProjectTestsDir}
-	return slices.Concat(out[:1], own, out[1:]), nil
 }
 
 var errNoRules = errors.New("the --suite/--rule/--gogrep-* selection matches no rules")

@@ -163,9 +163,9 @@ func TestRun(t *testing.T) {
 		t.Parallel()
 		c := &Cmd{Path: filepath.Join(t.TempDir(), "opengrep")}
 		err := c.Run(context.Background())
-		var exitErr *exec.ExitError
-		if err == nil || errors.As(err, &exitErr) {
-			t.Errorf("Run of a missing executable = %v, want a start error", err)
+		var startErr *StartError
+		if !errors.As(err, &startErr) {
+			t.Errorf("Run of a missing executable = %v, want a *StartError", err)
 		}
 	})
 

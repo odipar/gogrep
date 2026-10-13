@@ -14,29 +14,8 @@ import (
 	"github.com/odipar/gogrep/internal/ruletest"
 )
 
-// This file lets the gogrep command reach the engine's rule handling until
-// Command and Test exist; the steps that add them remove it.
-
-// SelectionFile writes the rules that sel selects for a scan of dir to an
-// opengrep config file in CacheDir and returns its path.
-func (e *Engine) SelectionFile(dir string, sel Selection, noProject bool) (string, error) {
-	if err := checkDir(dir, false); err != nil {
-		return "", err
-	}
-	env, err := e.loadEnv(dir, noProject)
-	if err != nil {
-		return "", err
-	}
-	selected, err := sel.resolve(env)
-	if err != nil {
-		return "", err
-	}
-	file, err := e.writeRules(selected)
-	if err != nil {
-		return "", fmt.Errorf("writing selected rules: %w", err)
-	}
-	return file, nil
-}
+// This file lets the gogrep command's test reach the engine until Test
+// exists; the step that adds it removes this file.
 
 // PlanTests returns the tests of fixtures, of the project in dir, whose rules
 // sel selects, as Test runs them: every test that has a rule has its Config.
@@ -75,17 +54,6 @@ func (e *Engine) PlanTests(dir string, fixtures []*ruletest.Fixture, sel Selecti
 		untested = ruletest.Untested(env.Sets["project"], tests)
 	}
 	return tests, untested, nil
-}
-
-// OpengrepEnv returns the opengrep that a Command runs, prepared as Opengrep
-// prepares it, and the environment it runs in: Config.Env, the locale fix,
-// and XDG_CACHE_HOME pointing at the prepared runtime.
-func (e *Engine) OpengrepEnv(ctx context.Context) (*OpengrepInfo, []string, error) {
-	info, xdg, err := e.opengrep(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	return info, withRuntime(opengrep.UTF8Env(e.env), xdg), nil
 }
 
 // TestExec returns the opengrep that Test runs, prepared as Opengrep

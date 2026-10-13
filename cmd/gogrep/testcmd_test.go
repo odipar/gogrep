@@ -1,13 +1,13 @@
 package gogrep
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -125,17 +125,17 @@ func requireOpengrep(t *testing.T) {
 			pinSkip = "reading opengrep.json: " + err.Error()
 			return
 		}
-		info, env, err := newTestCLI(t).eng.OpengrepEnv(context.Background())
+		c := newTestCLI(t)
+		cmd, err := c.eng.Command(context.Background(), c.dir, nil, "--version")
 		if err != nil {
 			pinSkip = "no opengrep: " + err.Error()
 			return
 		}
-		bin := info.Path
-		cmd := exec.Command(bin, "--version")
-		cmd.Env = env
-		out, err := cmd.Output()
-		if v := strings.TrimSpace(string(out)); err != nil || "v"+v != pin.Version {
-			pinSkip = fmt.Sprintf("%s --version = %q, %v; the golden files need opengrep %s", bin, v, err, pin.Version)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		err = cmd.Run()
+		if v := strings.TrimSpace(out.String()); err != nil || "v"+v != pin.Version {
+			pinSkip = fmt.Sprintf("%s --version = %q, %v; the golden files need opengrep %s", cmd.Path, v, err, pin.Version)
 		}
 	})
 	if pinSkip != "" {

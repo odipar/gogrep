@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -17,11 +16,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
+
+	"github.com/odipar/gogrep/internal/fakeopengrep"
 )
 
 // TestMain lets the test binary stand in for opengrep: run as $OPENGREP_BIN
-// with GOGREP_TEST_FAKE_OPENGREP=1, it is fakeOpengrep. Run with
+// with GOGREP_TEST_FAKE_OPENGREP=1, it is fakeopengrep.Main. Run with
 // GOGREP_TEST_SIGPROBE=1, it prints whether it started with SIGINT ignored.
 func TestMain(m *testing.M) {
 	if os.Getenv("GOGREP_TEST_SIGPROBE") == "1" {
@@ -29,7 +29,7 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	if os.Getenv("GOGREP_TEST_FAKE_OPENGREP") == "1" {
-		os.Exit(fakeOpengrep(os.Args[1:]))
+		os.Exit(fakeopengrep.Main(os.Args[1:]))
 	}
 	pins, err := os.ReadFile(filepath.Join(repoDir, "opengrep.json"))
 	if err != nil {
@@ -57,80 +57,7 @@ func newTestCLI(t *testing.T) *cli {
 	return c
 }
 
-// fakeOpengrep prints its args to stdout, one per line, or with --sarif a
-// SARIF log from tool "opengrep" that holds them as properties.args; the log
-// goes to the files that -o/--output and --sarif-output name instead, mode
-// 0o644, as gogrep finds them with sarifTargets. With
-// $GOGREP_TEST_FAKE_NO_SARIF=1 it writes no log. It writes "fake stderr" to
-// stderr and exits with $GOGREP_TEST_FAKE_EXIT. With $GOGREP_TEST_FAKE_STDIN=1
-// it first reports up to 4 bytes of its stdin on stderr. With
-// $GOGREP_TEST_FAKE_WAIT set, it first creates that file and waits a minute;
-// with $GOGREP_TEST_FAKE_CHILD=1 too, it first starts sleep 60, as opengrep's
-// launcher starts opengrep-cli and opengrep-core, and writes its pid there.
-// The --version run that prepares opengrep's runtime, which has a log file,
-// it answers at once. With $GOGREP_TEST_FAKE_ENV, a comma-separated list of
-// names, it first reports those variables on stderr as NAME=value.
-func fakeOpengrep(args []string) int {
-	if log := os.Getenv("SEMGREP_LOG_FILE"); len(args) == 1 && args[0] == "--version" && log != "" {
-		if filepath.Base(log) == "log" || strings.HasPrefix(filepath.Base(log), "opengrep-") {
-			fmt.Println("1.30.2")
-			return 0
-		}
-	}
-	if names := os.Getenv("GOGREP_TEST_FAKE_ENV"); names != "" {
-		for _, name := range strings.Split(names, ",") {
-			fmt.Fprintf(os.Stderr, "%s=%s\n", name, os.Getenv(name))
-		}
-	}
-	if os.Getenv("GOGREP_TEST_FAKE_STDIN") == "1" {
-		in, _ := io.ReadAll(io.LimitReader(os.Stdin, 4))
-		fmt.Fprintf(os.Stderr, "stdin %q\n", in)
-	}
-	if p := os.Getenv("GOGREP_TEST_FAKE_WAIT"); p != "" {
-		var pid []byte
-		if os.Getenv("GOGREP_TEST_FAKE_CHILD") == "1" {
-			child := exec.Command("sleep", "60")
-			child.Stdout = os.Stdout
-			if err := child.Start(); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				return 2
-			}
-			pid = strconv.AppendInt(nil, int64(child.Process.Pid), 10)
-		}
-		if os.WriteFile(p+".tmp", pid, 0o600) != nil || os.Rename(p+".tmp", p) != nil {
-			return 2
-		}
-		time.Sleep(time.Minute)
-	}
-	files, toStdout := sarifTargets(args)
-	if !slices.Contains(args, "--sarif") {
-		for _, a := range args {
-			fmt.Println(a)
-		}
-	}
-	if os.Getenv("GOGREP_TEST_FAKE_NO_SARIF") != "1" {
-		log, _ := json.Marshal(map[string]any{
-			"version": "2.1.0",
-			"runs": []any{map[string]any{
-				"tool":       map[string]any{"driver": map[string]any{"name": "opengrep"}},
-				"properties": map[string]any{"args": args},
-			}},
-		})
-		if toStdout {
-			fmt.Printf("%s\n", log)
-		}
-		for _, f := range files {
-			if os.WriteFile(f, log, 0o644) != nil || os.Chmod(f, 0o644) != nil {
-				return 2
-			}
-		}
-	}
-	fmt.Fprintln(os.Stderr, "fake stderr")
-	code, _ := strconv.Atoi(os.Getenv("GOGREP_TEST_FAKE_EXIT"))
-	return code
-}
-
-// useFakeOpengrep makes gogrep run fakeOpengrep as opengrep, exiting with
+// useFakeOpengrep makes gogrep run fakeopengrep.Main as opengrep, exiting with
 // code, with a cache of its own, which keeps the runtime prepared for it.
 func useFakeOpengrep(t *testing.T, code int) {
 	t.Helper()
@@ -151,7 +78,7 @@ func runGogrep(args ...string) (code int, stdout, stderr string) {
 	return code, out.String(), errb.String()
 }
 
-// sarifRun decodes the single run of the SARIF log fakeOpengrep printed.
+// sarifRun decodes the single run of the SARIF log the fake opengrep printed.
 func sarifRun(t *testing.T, stdout string) (driver string, args []string) {
 	t.Helper()
 	var log struct {
