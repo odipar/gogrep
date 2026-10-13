@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/odipar/gogrep/internal/sarif"
 )
 
 // Render renders a fixture's SARIF log as its expected table: a row per
@@ -18,7 +20,7 @@ import (
 // paths, which results and notification messages name. It is an error when a
 // result cannot be placed in a sample: it has no location, an incomplete
 // region, or a uri that names no sample.
-func Render(log *Log, samples []string) ([]byte, error) {
+func Render(log *sarif.Log, samples []string) ([]byte, error) {
 	type row struct {
 		path, msg  string
 		start, end [2]int

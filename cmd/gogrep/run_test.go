@@ -186,8 +186,8 @@ func TestRunScan(t *testing.T) {
 			t.Errorf("exit code, stderr = %d, %q; want 1, %q", code, stderr, "fake stderr\n")
 		}
 		driver, args := sarifRun(t, stdout)
-		if driver != toolName {
-			t.Errorf("SARIF driver = %q, want %q", driver, toolName)
+		if driver != "gogrep" {
+			t.Errorf("SARIF driver = %q, want gogrep", driver)
 		}
 		if len(args) > 2 && filepath.IsAbs(args[2]) {
 			args[2] = "<abs config>"
@@ -230,8 +230,8 @@ func TestRunSARIFChecks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if driver, _ := sarifRun(t, string(data)); driver != toolName {
-				t.Errorf("%s: SARIF driver = %q, want %q", f, driver, toolName)
+			if driver, _ := sarifRun(t, string(data)); driver != "gogrep" {
+				t.Errorf("%s: SARIF driver = %q, want gogrep", f, driver)
 			}
 			if fi, err := os.Stat(f); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 				t.Errorf("%s has mode %v, %v; want 0600", f, fi.Mode().Perm(), err)

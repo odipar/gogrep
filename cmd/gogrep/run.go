@@ -20,7 +20,7 @@ import (
 	"github.com/odipar/gogrep/internal/bundle"
 	"github.com/odipar/gogrep/internal/opengrep"
 	"github.com/odipar/gogrep/internal/pin"
-	"github.com/odipar/gogrep/internal/ruletest"
+	"github.com/odipar/gogrep/internal/sarif"
 )
 
 // Assets are the files gogrep embeds from the module root, which go:embed
@@ -88,9 +88,9 @@ func forward(args []string, sel selection, stdout, stderr io.Writer) int {
 	}
 	sarifFiles, sarifStdout := sarifTargets(args)
 	c := &opengrep.Cmd{Args: args, Stdout: stdout, Stderr: stderr}
-	var sarif bytes.Buffer
+	var out bytes.Buffer
 	if sarifStdout {
-		c.Stdout = &sarif
+		c.Stdout = &out
 	}
 	var code int
 	if len(args) > 0 && args[0] == "scan" {
@@ -110,10 +110,9 @@ func forward(args []string, sel selection, stdout, stderr io.Writer) int {
 	// when opengrep's processes were killed behind its launcher's back.
 	noSARIF := false
 	if sarifStdout {
-		data := sarif.Bytes()
-		_, err := ruletest.DecodeSARIF(data)
-		noSARIF = err != nil
-		if rebranded, err := rebrand(data); err == nil {
+		data := out.Bytes()
+		noSARIF = sarif.Check(data) != nil
+		if rebranded, err := sarif.Rebrand(data); err == nil {
 			data = append(rebranded, '\n')
 		}
 		stdout.Write(data)

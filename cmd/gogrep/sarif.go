@@ -1,23 +1,17 @@
 package gogrep
 
 import (
-	"bytes"
-	"encoding/json"
 	"os"
 	"slices"
 	"strings"
 
-	"github.com/odipar/gogrep/internal/ruletest"
+	"github.com/odipar/gogrep/internal/sarif"
 )
-
-// toolName replaces opengrep's tool.driver.name in SARIF output, so GitHub
-// code scanning lists the results under gogrep.
-const toolName = "gogrep"
 
 // sarifTargets reports where opengrep will write SARIF for args: the files it
 // writes to, and whether SARIF goes to stdout.
 func sarifTargets(args []string) (files []string, toStdout bool) {
-	sarif := slices.Contains(args, "--sarif")
+	asked := slices.Contains(args, "--sarif")
 	var output string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -41,7 +35,7 @@ func sarifTargets(args []string) (files []string, toStdout bool) {
 			files = append(files, strings.TrimPrefix(a, "--sarif-output="))
 		}
 	}
-	if sarif {
+	if asked {
 		if output == "" {
 			toStdout = true
 		} else {
@@ -55,8 +49,8 @@ func sarifTargets(args []string) (files []string, toStdout bool) {
 	return files, toStdout
 }
 
-// rebrandFile rewrites the SARIF file at path in place with rebrand, and
-// makes it readable by its owner only: opengrep creates it 0o644, and
+// rebrandFile rewrites the SARIF file at path in place with sarif.Rebrand,
+// and makes it readable by its owner only: opengrep creates it 0o644, and
 // os.WriteFile keeps the mode of a file that exists. valid reports whether
 // the file held the SARIF 2.1.0 log of one run that gogrep asks for.
 func rebrandFile(path string) (valid bool, err error) {
@@ -64,9 +58,8 @@ func rebrandFile(path string) (valid bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	_, err = ruletest.DecodeSARIF(data)
-	valid = err == nil
-	out, err := rebrand(data)
+	valid = sarif.Check(data) == nil
+	out, err := sarif.Rebrand(data)
 	if err != nil {
 		return valid, err
 	}
@@ -74,24 +67,4 @@ func rebrandFile(path string) (valid bool, err error) {
 		return valid, err
 	}
 	return valid, os.Chmod(path, 0o600)
-}
-
-// rebrand sets tool.driver.name to toolName in every run of a SARIF log,
-// leaving all other fields untouched.
-func rebrand(data []byte) ([]byte, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	var log map[string]any
-	if err := dec.Decode(&log); err != nil {
-		return nil, err
-	}
-	runs, _ := log["runs"].([]any)
-	for _, r := range runs {
-		run, _ := r.(map[string]any)
-		tool, _ := run["tool"].(map[string]any)
-		if driver, ok := tool["driver"].(map[string]any); ok {
-			driver["name"] = toolName
-		}
-	}
-	return json.Marshal(log)
 }
