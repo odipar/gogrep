@@ -335,7 +335,7 @@ func TestRunKeepSARIF(t *testing.T) {
 func TestRunShowOutput(t *testing.T) {
 	r := newFakeRunner()
 	r.Bin, r.ShowOutput = "/opt/open grep/opengrep", true
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "it's")
 	out := results("m")
 	out.Stderr = []byte("\n  \nScanning 1 file.\n\nRan 1 rule.  \n\n")
 	tests := []*Test{
@@ -345,7 +345,7 @@ func TestRunShowOutput(t *testing.T) {
 	sample := "." + string(filepath.Separator) + "a.go"
 	want := `Executing 2 tests.
 [1/2] PASSED test/a
-  $ ` + commandLine([]string{r.Bin, "scan", "--config", testConfig, "--no-rewrite-rule-ids", "--sarif", "--disable-version-check", "--timeout", "0", "-j", "1", "--", sample}) + `
+  $ (cd '` + strings.ReplaceAll(filepath.ToSlash(dir), "'", `'\''`) + `/a' && '/opt/open grep/opengrep' scan --config ` + testConfig + ` --no-rewrite-rule-ids --sarif --disable-version-check --timeout 0 -j 1 -- ` + commandLine([]string{sample}) + `)
   > Scanning 1 file.
   >
   > Ran 1 rule.

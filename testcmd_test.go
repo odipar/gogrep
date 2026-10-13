@@ -256,9 +256,9 @@ func TestTestOpengrepBin(t *testing.T) {
 		t.Setenv("OPENGREP_BIN", rel)
 		// The fake opengrep loads no rule, so the test fails at RULE.
 		code, stdout, stderr := runGogrep("test", "--show-opengrep-output", fixture)
-		_, cmd, _ := strings.Cut(stdout, "  $ ")
-		bin, _, _ := strings.Cut(strings.TrimPrefix(cmd, "'"), " scan ")
-		if code != 1 || stderr != "" || !strings.Contains(stdout, "FAILED(RULE)") || !filepath.IsAbs(strings.TrimSuffix(bin, "'")) {
+		_, cmd, _ := strings.Cut(stdout, " && ")
+		bin, _, _ := strings.Cut(cmd, " scan ")
+		if code != 1 || stderr != "" || !strings.Contains(stdout, "FAILED(RULE)") || !filepath.IsAbs(strings.Trim(bin, "'")) {
 			t.Errorf("gogrep test with OPENGREP_BIN=%s = %d, %q, stdout\n%s\nwant 1, no stderr, a RULE failure and an absolute opengrep", rel, code, stderr, stdout)
 		}
 	})
