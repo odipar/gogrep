@@ -1,0 +1,26 @@
+Executing 10 tests.
+[1/10] FAILED(RULE) opengrep/gogrep/rules/test/broken/ambiguous
+  rule reference "go.no-exec-command" is ambiguous: project.broken.go.no-exec-command, project.go.no-exec-command; write the full id
+[2/10] FAILED(SETUP) opengrep/gogrep/rules/test/broken/empty
+  no code samples
+[3/10] FAILED(SETUP) opengrep/gogrep/rules/test/broken/orphan
+  expected.txt has no rule.ref next to it
+[4/10] FAILED(SETUP) opengrep/gogrep/rules/test/broken/outer
+  fixture contains nested fixture opengrep/gogrep/rules/test/broken/outer/inner
+[5/10] FAILED(SETUP) opengrep/gogrep/rules/test/broken/outer/inner
+  fixture is nested inside opengrep/gogrep/rules/test/broken/outer
+[6/10] FAILED(SETUP) opengrep/gogrep/rules/test/broken/typo
+  unknown regression file expected.text; the expected file is expected.txt
+[7/10] FAILED(RULE) opengrep/gogrep/rules/test/broken/unknown
+  rule reference "no-such-rule" matches no rule; list candidates with: gogrep rules --rule '/no-such-rule/'
+[8/10] PASSED opengrep/gogrep/rules/test/go/exec-command
+[9/10] PASSED opengrep/gogrep/rules/test/go/exec-command-layout
+[10/10] PASSED opengrep/gogrep/rules/test/go/exec-command-partial
+3 tests passed; 7 tests failed:
+  FAILED: opengrep/gogrep/rules/test/broken/ambiguous
+  FAILED: opengrep/gogrep/rules/test/broken/empty
+  FAILED: opengrep/gogrep/rules/test/broken/orphan
+  FAILED: opengrep/gogrep/rules/test/broken/outer
+  FAILED: opengrep/gogrep/rules/test/broken/outer/inner
+  FAILED: opengrep/gogrep/rules/test/broken/typo
+  FAILED: opengrep/gogrep/rules/test/broken/unknown

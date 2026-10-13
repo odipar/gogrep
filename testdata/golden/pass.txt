@@ -1,0 +1,7 @@
+Executing 5 tests.
+[1/5] PASSED opengrep/gogrep/rules/test/generic/todo-marker
+[2/5] PASSED opengrep/gogrep/rules/test/go/exec-command
+[3/5] PASSED opengrep/gogrep/rules/test/go/exec-command-in-prod
+[4/5] PASSED opengrep/gogrep/rules/test/go/exec-command-layout
+[5/5] PASSED opengrep/gogrep/rules/test/go/exec-command-partial
+All 5 tests passed.

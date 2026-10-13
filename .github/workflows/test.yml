@@ -1,0 +1,45 @@
+name: test
+
+# Vets and tests gogrep, then runs the example rule test fixtures with a
+# bundled build, on every OS that gogrep test must give identical results on.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Fetch the pinned opengrep for this platform
+        run: go run ./tools/fetch-opengrep
+
+      - name: Vet
+        run: go vet ./... && go vet -tags bundled ./...
+
+      - name: Test
+        run: go test -tags bundled ./...
+
+      - name: Build gogrep with the pinned opengrep
+        # A directory output adds .exe on Windows.
+        run: go build -tags bundled -o "$RUNNER_TEMP/bin/" .
+
+      - name: Run the example rule tests
+        run: cd testdata/project && "$RUNNER_TEMP/bin/gogrep" test

@@ -1,0 +1,8 @@
+#select
+| sample.go:6:2:6:26 | Avoid running name with exec.Command |
+| sample.go:7:6:7:24 | Avoid running "ls" with exec.Command |
+| sub/broken.go:6:2:6:19 | Avoid running "a" with exec.Command |
+| sub/broken.go:8:2:8:19 | Avoid running "b" with exec.Command |
+| sub/runner_test.go:5:18:5:44 | Avoid running "go" with exec.Command |
+diagnostics
+| warning | Syntax error | Syntax error at line sub/broken.go:7:\n `:=` was unexpected |

@@ -32,15 +32,18 @@ var builtinSuites embed.FS
 
 // A project's own rules and suites live under opengrep/gogrep in the current
 // directory. Project rules form the "project" rule set; a project suite
-// shadows a built-in one of the same name.
+// shadows a built-in one of the same name. The rules directory's test/
+// subdirectory holds rule test fixtures and is never loaded as rules.
 var (
 	projectRulesDir  = filepath.Join("opengrep", "gogrep", "rules")
+	projectTestsDir  = filepath.Join(projectRulesDir, testsDir)
 	projectSuitesDir = filepath.Join("opengrep", "gogrep", "suites")
 )
 
 const (
 	defaultSuite  = "code-scanning"
 	bundledConfig = "bundled" // --config value that selects the bundled rules
+	testsDir      = "test"    // the directory of a rule set reserved for test fixtures
 )
 
 // selection is how gogrep's own flags select rules.
@@ -99,7 +102,9 @@ func gogrepFlags(args []string) (rest []string, sel selection, err error) {
 // withRules points a scan at the selected bundled rules when it names no
 // rules itself (no --config, -e/--pattern or $SEMGREP_RULES), when it uses
 // --config bundled, or when --suite or --rule is given. The selection goes to
-// opengrep as one generated config with stable rule ids.
+// opengrep as one generated config with stable rule ids, and the scan skips
+// the project's rule test fixtures: a project .semgrepignore replaces
+// opengrep's default exclusion of test/ directories.
 func withRules(args []string, sel selection) ([]string, error) {
 	if len(args) == 0 || args[0] != "scan" {
 		return args, nil
@@ -147,18 +152,59 @@ func withRules(args []string, sel selection) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("writing selected rules: %w", err)
 	}
-	return append(out, "--config", file, "--no-rewrite-rule-ids"), nil
+	// Insert right after "scan": after a user's "--" they would be targets.
+	own := []string{"--config", file, "--no-rewrite-rule-ids", "--exclude=" + filepath.ToSlash(projectTestsDir)}
+	return slices.Concat(out[:1], own, out[1:]), nil
 }
+
+var errNoRules = errors.New("the --suite/--rule/--gogrep-* selection matches no rules")
 
 // resolve returns the rules sel selects: the union of its suites and rules
 // (or the default suite), narrowed by its filters.
 func (sel selection) resolve(env *suite.Env) ([]*rules.Rule, error) {
-	var picked []*rules.Rule
-	suites := sel.suites
 	if !sel.explicit {
-		suites = []string{defaultSuite}
+		sel.suites = []string{defaultSuite}
 	}
-	for _, name := range suites {
+	picked, err := sel.union(env)
+	if err != nil {
+		return nil, err
+	}
+	picked = suite.Narrow(picked, sel.narrow...)
+	if len(picked) == 0 {
+		return nil, errNoRules
+	}
+	return picked, nil
+}
+
+// filter returns the ids of the rules sel selects for gogrep test, which has
+// no default suite: the union of its suites and rules, or every rule when it
+// names none, narrowed by its filters. active is false when sel has no
+// selection flags at all, and so selects every rule.
+func (sel selection) filter(env *suite.Env) (ids map[string]bool, active bool, err error) {
+	if !sel.explicit && len(sel.narrow) == 0 {
+		return nil, false, nil
+	}
+	picked := allRules(env)
+	if sel.explicit {
+		if picked, err = sel.union(env); err != nil {
+			return nil, true, err
+		}
+	}
+	picked = suite.Narrow(picked, sel.narrow...)
+	if len(picked) == 0 {
+		return nil, true, errNoRules
+	}
+	ids = map[string]bool{}
+	for _, r := range picked {
+		ids[r.ID] = true
+	}
+	return ids, true, nil
+}
+
+// union returns the rules that sel's suites and rules select, sorted by id.
+func (sel selection) union(env *suite.Env) ([]*rules.Rule, error) {
+	var picked []*rules.Rule
+	for _, name := range sel.suites {
 		s, err := env.Load(name)
 		if err != nil {
 			return nil, err
@@ -176,11 +222,7 @@ func (sel selection) resolve(env *suite.Env) ([]*rules.Rule, error) {
 		}
 		picked = append(picked, rs...)
 	}
-	picked = suite.Narrow(dedupe(picked), sel.narrow...)
-	if len(picked) == 0 {
-		return nil, errors.New("the --suite/--rule/--gogrep-* selection matches no rules")
-	}
-	return picked, nil
+	return dedupe(picked), nil
 }
 
 // ruleByID selects rules whose qualified id is id, ends in "."+id, or
@@ -194,15 +236,20 @@ func ruleByID(env *suite.Env, id string) ([]*rules.Rule, error) {
 	if err != nil {
 		return nil, fmt.Errorf("--rule %s: %w", id, err)
 	}
-	var all []*rules.Rule
-	for _, set := range slices.Sorted(maps.Keys(env.Sets)) {
-		all = append(all, env.Sets[set]...)
-	}
-	rs := suite.Narrow(all, f)
+	rs := suite.Narrow(allRules(env), f)
 	if len(rs) == 0 {
 		return nil, fmt.Errorf("--rule %s matches no rule; list them with: gogrep rules --suite all", id)
 	}
 	return rs, nil
+}
+
+// allRules returns every rule in env, by rule set name.
+func allRules(env *suite.Env) []*rules.Rule {
+	var all []*rules.Rule
+	for _, set := range slices.Sorted(maps.Keys(env.Sets)) {
+		all = append(all, env.Sets[set]...)
+	}
+	return all
 }
 
 func dedupe(rs []*rules.Rule) []*rules.Rule {
@@ -211,7 +258,8 @@ func dedupe(rs []*rules.Rule) []*rules.Rule {
 }
 
 // loadEnv parses all rule sets: the bundled ones, gogrep's own and the
-// project's. Groups: "bundled" (the pinned third-party sets) and "all".
+// project's, the last two without their test fixtures. Groups: "bundled" (the
+// pinned third-party sets) and "all".
 func loadEnv() (*suite.Env, error) {
 	sets := map[string]rules.Set{}
 	var bundled []string
@@ -227,12 +275,12 @@ func loadEnv() (*suite.Env, error) {
 	if err != nil {
 		return nil, err
 	}
-	if sets["gogrep"], err = rules.FromFS(own); err != nil {
+	if sets["gogrep"], err = rules.FromFS(own, testsDir); err != nil {
 		return nil, err
 	}
 	sets["project"] = rules.Set{}
 	if fi, err := os.Stat(projectRulesDir); err == nil && fi.IsDir() {
-		if sets["project"], err = rules.FromFS(os.DirFS(projectRulesDir)); err != nil {
+		if sets["project"], err = rules.FromFS(os.DirFS(projectRulesDir), testsDir); err != nil {
 			return nil, fmt.Errorf("reading %s: %w", projectRulesDir, err)
 		}
 	}
@@ -276,8 +324,9 @@ func loadSuite(name string) (*suite.Suite, error) {
 	return nil, fmt.Errorf("unknown suite %q; list them with: gogrep suites", name)
 }
 
-// listRules implements `gogrep rules`: print the rules a selection picks.
-func listRules(w io.Writer, sel selection) error {
+// listRules implements `gogrep rules`: print the rules a selection picks, and
+// their count to stderr.
+func listRules(w, stderr io.Writer, sel selection) error {
 	env, err := loadEnv()
 	if err != nil {
 		return err
@@ -302,9 +351,9 @@ func listRules(w io.Writer, sel selection) error {
 		return err
 	}
 	if len(rs) == 1 {
-		fmt.Fprintln(os.Stderr, "1 rule")
+		fmt.Fprintln(stderr, "1 rule")
 	} else {
-		fmt.Fprintf(os.Stderr, "%d rules\n", len(rs))
+		fmt.Fprintf(stderr, "%d rules\n", len(rs))
 	}
 	return nil
 }

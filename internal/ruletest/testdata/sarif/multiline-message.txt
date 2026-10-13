@@ -1,0 +1,6 @@
+| crlf.go:9:2:10:12 | Avoid running fmt.Sprint(x\|\n\t\ty) with exec.Command |
+| ctl.go:6:2:6:23 | Avoid running `\u001B[31m` with exec.Command |
+| ctl.go:7:2:7:21 | Avoid running `a\\b` with exec.Command |
+| ctl.go:8:2:8:27 | Avoid running "héllo→" with exec.Command |
+| invalid.go:6:2:6:20 | Avoid running `��` with exec.Command |
+| lf.go:9:2:10:12 | Avoid running fmt.Sprint(x\|\n\t\ty) with exec.Command |

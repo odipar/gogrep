@@ -1,0 +1,7 @@
+| -dash.go:5:15:5:35 | Avoid running "dash" with exec.Command |
+| .hidden/h.go:5:12:5:34 | Avoid running "hidden" with exec.Command |
+| crlf.go:6:2:6:26 | Avoid running name with exec.Command |
+| crlf.go:7:6:7:24 | Avoid running "ls" with exec.Command |
+| lf.go:6:2:6:26 | Avoid running name with exec.Command |
+| lf.go:7:6:7:24 | Avoid running "ls" with exec.Command |
+| vendor/v.go:5:12:5:36 | Avoid running "vendored" with exec.Command |

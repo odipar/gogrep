@@ -1,0 +1,4 @@
+# Not a rule: YAML under test/ is never loaded as rules.
+rules:
+  - id: TODO
+    pattern: [unclosed

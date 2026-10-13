@@ -155,6 +155,288 @@ Ran 492 rules on 31 files: 8 findings.
 `--gogrep-lang`, `--gogrep-category` and `--gogrep-ruleset` narrow any
 selection, e.g. `gogrep scan --suite all --gogrep-lang go .`.
 
+### 5. Test custom rules
+
+`gogrep test` runs regression tests for your rules, modelled on CodeQL's
+`codeql test run`. Each test is a fixture: a directory under
+`opengrep/gogrep/rules/test/` with a `rule.ref` that names one rule, code
+samples, and an `expected.txt` that lists what the rule reports on them.
+
+```
+opengrep/gogrep/rules/
+├── go/
+│   └── no-exec-command.yaml        # rule: project.go.no-exec-command
+└── test/                           # fixtures, never loaded as rules
+    └── go/                         # namespace, mirrors rules/go/
+        └── exec-command/           # fixture: one test
+            ├── rule.ref            # the rule under test
+            ├── expected.txt        # what it reports (commit it)
+            ├── actual.txt          # written when that differs (ignore it)
+            ├── sample.go           # every other file is a code sample,
+            ├── safe.go
+            └── sub/runner_test.go  # subdirectories included
+```
+
+Take a variant of the rule from [1. Run one custom rule](#1-run-one-custom-rule)
+whose message names the command it finds:
+
+```yaml
+# opengrep/gogrep/rules/go/no-exec-command.yaml
+rules:
+  - id: no-exec-command
+    languages: [go]
+    severity: WARNING
+    message: Avoid running $CMD with exec.Command
+    pattern: exec.Command($CMD, ...)
+```
+
+`opengrep/gogrep/rules/test/go/exec-command/rule.ref` names it. Blank lines
+and lines starting with `#` are ignored:
+
+```
+# Tests project.go.no-exec-command (resolved within namespace "go").
+no-exec-command
+```
+
+Next to it go the code samples. `sample.go` has two calls the rule should
+flag:
+
+```go
+package sample
+
+import "os/exec"
+
+func run(name string) {
+	exec.Command(name, "-v")
+	_ = exec.Command("ls")
+}
+```
+
+`sub/runner_test.go` has a third. A scan skips this file (opengrep ignores
+`*_test.go` and `test/` by default), but a fixture scans every sample:
+
+```go
+package sub
+
+import "os/exec"
+
+func TestRun() { exec.Command("go", "test") }
+```
+
+`safe.go` has nothing the rule should flag:
+
+```go
+package safe
+
+import "os"
+
+func ok() { os.Getenv("HOME") }
+```
+
+Run `gogrep test` from the project root. With no `expected.txt` yet, the
+test fails and shows what the rule reports:
+
+```console
+$ gogrep test
+Executing 1 tests.
+[1/1] FAILED(RESULT) opengrep/gogrep/rules/test/go/exec-command
+Cannot find expected.txt.
+--- expected
++++ actual
+@@ -0,0 +1,3 @@
++| sample.go:6:2:6:26 | Avoid running name with exec.Command |
++| sample.go:7:6:7:24 | Avoid running "ls" with exec.Command |
++| sub/runner_test.go:5:18:5:44 | Avoid running "go" with exec.Command |
+0 tests passed; 1 tests failed:
+  FAILED: opengrep/gogrep/rules/test/go/exec-command
+```
+
+The results are also in `actual.txt`. If they are right, `gogrep test accept`
+makes them the new `expected.txt`. Commit that file:
+
+```console
+$ gogrep test accept
+Accepted opengrep/gogrep/rules/test/go/exec-command
+$ gogrep test
+Executing 1 tests.
+[1/1] PASSED opengrep/gogrep/rules/test/go/exec-command
+All 1 tests passed.
+```
+
+From then on, any change in what the rule reports fails the test. Narrowing
+the pattern to `exec.Command($CMD)` loses two matches:
+
+```console
+$ gogrep test
+Executing 1 tests.
+[1/1] FAILED(RESULT) opengrep/gogrep/rules/test/go/exec-command
+--- expected
++++ actual
+@@ -1,3 +1,1 @@
+-| sample.go:6:2:6:26 | Avoid running name with exec.Command |
+ | sample.go:7:6:7:24 | Avoid running "ls" with exec.Command |
+-| sub/runner_test.go:5:18:5:44 | Avoid running "go" with exec.Command |
+0 tests passed; 1 tests failed:
+  FAILED: opengrep/gogrep/rules/test/go/exec-command
+$ echo $?
+1
+```
+
+If the change is intended, run `gogrep test accept`, or `gogrep test --learn`,
+which writes `expected.txt` right away and prints the diff under `LEARNED`.
+Review the change to `expected.txt` like code. `accept` promotes every
+`actual.txt` under the paths it is given, whichever run wrote it, and a run
+removes `actual.txt` only from the fixtures it includes; so after a run
+limited to some paths, give `accept` the same paths.
+
+**How `rule.ref` finds its rule.** gogrep looks the reference up in three
+ways, which together must find exactly one rule:
+
+1. a full rule id, such as `project.go.no-exec-command`. This is also how to
+   test a bundled or `gogrep` rule, e.g.
+   `opengrep-rules.go.lang.security.audit.dangerous-exec-command`;
+2. `project.<namespace>.<reference>`, where the namespace is the fixture's
+   path below `test/` with `.` for `/` (`go` above);
+3. `project.<reference>`.
+
+Unlike `--rule`, a reference never matches just the end of an id, so
+renaming or moving a rule cannot make a fixture test a different one. A
+reference that matches no rule, or several, fails at `RULE`. Here the same
+`rule.ref` sits in `test/misc/exec/`:
+
+```console
+$ gogrep test
+Executing 2 tests.
+[1/2] PASSED opengrep/gogrep/rules/test/go/exec-command
+[2/2] FAILED(RULE) opengrep/gogrep/rules/test/misc/exec
+  rule reference "no-exec-command" matches no rule; did you mean project.go.no-exec-command?; list candidates with: gogrep rules --rule '/no-exec-command/'
+1 tests passed; 1 tests failed:
+  FAILED: opengrep/gogrep/rules/test/misc/exec
+```
+
+`gogrep rules --rule <reference>` shows the full ids:
+
+```console
+$ gogrep rules --rule no-exec-command
+ID                          SEVERITY  CATEGORY  CONFIDENCE  LANGUAGES
+project.go.no-exec-command  WARNING   -         -           go
+1 rule
+```
+
+**The `expected.txt` format.** Each result is a row
+`| <path>:<startLine>:<startColumn>:<endLine>:<endColumn> | <message> |`, and
+the file is the same on macOS, Linux and Windows as long as git checks the
+samples out byte for byte (see the line endings tip below):
+
+- The path is relative to the fixture and uses `/`.
+- Positions are what opengrep reports, as in `gogrep scan --sarif`: they
+  start at 1, the end column is exclusive, and columns count UTF-8 bytes,
+  not characters.
+- The message has its metavariables filled in.
+- Rows are sorted by path, position and message. Duplicates are kept.
+- In a cell, `\`, `|`, newline, carriage return and tab are written as `\\`,
+  `\|`, `\n`, `\r` and `\t`, and other control characters as `\u00XX`.
+- An empty file means the rule reports nothing on the samples.
+
+opengrep's warnings about the samples, such as a syntax error, are recorded
+too: the results then come under `#select` and the warnings under
+`diagnostics`. With an added `sub/broken.go` that does not parse:
+
+```
+#select
+| sample.go:6:2:6:26 | Avoid running name with exec.Command |
+| sample.go:7:6:7:24 | Avoid running "ls" with exec.Command |
+| sub/broken.go:6:2:6:19 | Avoid running "a" with exec.Command |
+| sub/broken.go:8:2:8:19 | Avoid running "b" with exec.Command |
+| sub/runner_test.go:5:18:5:44 | Avoid running "go" with exec.Command |
+diagnostics
+| warning | Syntax error | Syntax error at line sub/broken.go:7:\n `:=` was unexpected |
+```
+
+**Failures** name the stage that failed:
+
+| Stage | Meaning |
+|---|---|
+| `SETUP` | The fixture is malformed, e.g. it has no samples, its `rule.ref` is empty, or it has a misspelt `expected.text`. gogrep does not follow symlinks, so a symlink to a directory anywhere under `opengrep/gogrep/rules/test/` (outside a fixture) fails at `SETUP` too, rather than silently skipping the fixtures behind it. Inside a fixture, any symlink fails. |
+| `RULE` | `rule.ref` matches no rule or several, or opengrep rejects the rule. |
+| `RUN` | opengrep failed, or its output cannot be trusted. |
+| `RESULT` | `expected.txt` is missing or differs. |
+
+**Options.** A path selects the fixtures in or below a directory, or the
+fixture that holds a file, e.g. `gogrep test opengrep/gogrep/rules/test/go`:
+
+```console
+$ gogrep test --help
+Usage:
+  gogrep test [run] [flags] [path...]   run rule test fixtures
+  gogrep test accept [path...]          make each actual.txt the new expected.txt
+
+Paths default to opengrep/gogrep/rules/test and must lie inside it.
+
+Flags (run):
+  --learn                  write expected.txt for tests whose results differ
+  -j, --threads N          opengrep processes at once (default and 0: CPU count;
+                           -N: CPU count minus N)
+  --keep-sarif             keep each fixture's raw SARIF as actual.sarif
+  --show-opengrep-output   print each fixture's opengrep command and stderr
+  --rule, --suite, --gogrep-lang, --gogrep-category, --gogrep-ruleset
+                           run only fixtures whose rule is selected
+
+opengrep's own test runner: gogrep opengrep test ...
+Exit codes: 0 all passed, 1 a test failed, 2 usage or setup error, 130 interrupted.
+```
+
+Finding no tests exits 2, and so does a path that selects none, so a
+misconfigured CI job cannot pass without testing anything. After a run of every fixture, gogrep warns on stderr about
+`project` rules that no fixture tests:
+
+```
+gogrep: warning: 1 project rule has no test fixture:
+  project.go.no-os-exit
+```
+
+**Tips:**
+
+- **Go projects:** add `opengrep/gogrep/rules/test/go.mod` holding
+  `module fixtures`. Samples are often deliberately bad code, and the nested
+  module keeps them out of `go build ./...`, `go vet ./...` and
+  `go test ./...`.
+- **Line endings:** add `opengrep/gogrep/rules/test/.gitattributes` holding
+  `* -text`, so git checks samples and expected files out byte for byte on
+  every OS. Rules with `pattern-regex` need it: Git for Windows checks text
+  files out with CRLF by default, and a regex match that runs to the end of
+  a line then includes the carriage return, which changes its end column
+  and its message. Structural patterns (checked for Go, YAML and generic
+  rules) report the same for CRLF and LF samples.
+- **`.gitignore`** the files gogrep writes into fixtures:
+  ```
+  **/opengrep/gogrep/rules/test/**/actual.txt
+  **/opengrep/gogrep/rules/test/**/actual.sarif
+  ```
+- **Give every fixture a sample the rule flags.** opengrep silently skips a
+  sample whose file extension does not fit the rule's languages, so an empty
+  `expected.txt` on its own proves nothing.
+- **A rule's `paths:` filters see paths relative to the fixture.**
+  `exclude: ["*_test.go"]` works on samples as in a scan; a rule with
+  `include: ["src/**"]` needs its samples under `<fixture>/src/`.
+- **Every sample is scanned,** including those a scan skips: `*_test.go`,
+  `vendor/` and `test/` (opengrep's default ignores), and paths that
+  `.semgrepignore` or `.gitignore` ignore.
+
+**In CI,** [install](#install) gogrep and run it from the project root:
+
+```yaml
+      - name: Test custom rules
+        run: gogrep test
+```
+
+Each opengrep process needs up to about 265 MB of memory; on a small runner,
+`-j 2` runs only two at once.
+
+`gogrep test` replaces opengrep's own `test` command, which gogrep used to
+pass through. That annotation-based runner is still available as
+`gogrep opengrep test --config <dir> <tests>`.
+
 ## How gogrep picks rules
 
 - **No rules named:** with no `--config` or `-e`, gogrep runs the selected
@@ -162,21 +444,42 @@ selection, e.g. `gogrep scan --suite all --gogrep-lang go .`.
   does the same explicitly.
 - **Your own `--config`:** `gogrep scan --config auto .` or
   `--config my-rules/` is passed to opengrep untouched. `--config auto`
-  downloads rules from semgrep.dev and so needs internet.
+  downloads rules from semgrep.dev and so needs internet. Adding `--suite`
+  or `--rule` runs the selected bundled rules as well, as if you had also
+  passed `--config bundled`.
 - **Rule sets:**
   - `opengrep-rules`, `0xdea` and `semgrep-go`: third-party rules, each
     pinned to a git commit in [opengrep.json](opengrep.json).
   - `gogrep`: rules in this repository's [rules/](rules/README.md).
-  - `project`: rules in `opengrep/gogrep/rules/` of the scanned project.
+  - `project`: rules in `opengrep/gogrep/rules/` of the scanned project,
+    except `test/` (in any letter case), which holds
+    [rule test fixtures](#5-test-custom-rules) and is never loaded as rules.
+    Scans that run gogrep's rules (no `--config`, `-e` or `$SEMGREP_RULES`,
+    or `--config bundled`, `--suite` or `--rule`) skip it. A scan with only
+    your own `--config` scans it like any other directory: opengrep's
+    default ignores skip `test/`, but a project `.semgrepignore` replaces
+    them, so add `opengrep/gogrep/rules/test/` to it. Point `--config` at single rule
+    files rather than at `opengrep/gogrep/rules`, which would load YAML
+    samples in fixtures as rules, or use `--gogrep-ruleset project`.
 - **Rule ids** are stable (`<rule set>.<directory>.<rule id>`), so results
   keep their identity across machines and rule updates.
+- **`gogrep opengrep <args>`** runs the wrapped opengrep with `<args>`
+  verbatim: gogrep adds no rules, hands its own flags such as `--rule` to
+  opengrep, and leaves SARIF as opengrep wrote it.
 
 ## Building
 
 ```sh
 go run ./tools/fetch-opengrep           # download the pinned opengrep and rule sets
 go build -tags bundled -o gogrep .      # build with them embedded
+go test -tags bundled ./...             # unit and integration tests
 ```
+
+The integration tests run the bundled opengrep on the example fixtures in
+[testdata/project](testdata/project) and compare the
+output with [testdata/golden](testdata/golden). They are skipped with
+`-short`, and when the build finds no opengrep of the version pinned in
+`opengrep.json`.
 
 `go install github.com/odipar/gogrep@latest` builds the plain wrapper instead.
 It runs the `opengrep` on your `PATH` and has no bundled rules. To move to a
