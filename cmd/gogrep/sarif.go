@@ -6,6 +6,8 @@ import (
 	"os"
 	"slices"
 	"strings"
+
+	"github.com/odipar/gogrep/internal/ruletest"
 )
 
 // toolName replaces opengrep's tool.driver.name in SARIF output, so GitHub
@@ -53,17 +55,25 @@ func sarifTargets(args []string) (files []string, toStdout bool) {
 	return files, toStdout
 }
 
-// rebrandFile rewrites the SARIF file at path in place with rebrand.
-func rebrandFile(path string) error {
+// rebrandFile rewrites the SARIF file at path in place with rebrand, and
+// makes it readable by its owner only: opengrep creates it 0o644, and
+// os.WriteFile keeps the mode of a file that exists. valid reports whether
+// the file held the SARIF 2.1.0 log of one run that gogrep asks for.
+func rebrandFile(path string) (valid bool, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return false, err
 	}
+	_, err = ruletest.DecodeSARIF(data)
+	valid = err == nil
 	out, err := rebrand(data)
 	if err != nil {
-		return err
+		return valid, err
 	}
-	return os.WriteFile(path, out, 0o600)
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		return valid, err
+	}
+	return valid, os.Chmod(path, 0o600)
 }
 
 // rebrand sets tool.driver.name to toolName in every run of a SARIF log,

@@ -4,6 +4,7 @@ package gogrep
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,11 +14,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"syscall"
 
 	"github.com/odipar/gogrep/internal/bundle"
 	"github.com/odipar/gogrep/internal/opengrep"
 	"github.com/odipar/gogrep/internal/pin"
+	"github.com/odipar/gogrep/internal/ruletest"
 )
 
 // Assets are the files gogrep embeds from the module root, which go:embed
@@ -42,7 +45,8 @@ func Main(args []string, a Assets) int {
 // <args>` runs opengrep with args verbatim, gogrep's own flags included.
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "opengrep" {
-		return execOpengrep(args[1:], stdout, stderr)
+		c := &opengrep.Cmd{Args: args[1:], Stdout: stdout, Stderr: stderr, Foreground: true}
+		return execOpengrep(context.Background(), c, stderr)
 	}
 	args, sel, err := gogrepFlags(args)
 	if err != nil {
@@ -71,7 +75,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 // forward runs an opengrep command: a scan gets the selected rules (see
-// withRules), and the SARIF it writes is rebranded.
+// withRules), and the SARIF it writes is rebranded and checked. A scan runs
+// in a process group of its own: the signals a terminal sends its
+// foreground group reach gogrep alone, which kills opengrep with every
+// process it started, says so and exits 130. Every other command shares
+// gogrep's process group and stdin, as gogrep opengrep does.
 func forward(args []string, sel selection, stdout, stderr io.Writer) int {
 	args, err := withRules(args, sel)
 	if err != nil {
@@ -79,53 +87,99 @@ func forward(args []string, sel selection, stdout, stderr io.Writer) int {
 		return 2
 	}
 	sarifFiles, sarifStdout := sarifTargets(args)
-	out := stdout
+	c := &opengrep.Cmd{Args: args, Stdout: stdout, Stderr: stderr}
 	var sarif bytes.Buffer
 	if sarifStdout {
-		out = &sarif
+		c.Stdout = &sarif
 	}
-	code := execOpengrep(args, out, stderr)
+	var code int
+	if len(args) > 0 && args[0] == "scan" {
+		ctx, stop := interruptContext()
+		defer stop()
+		c.Stdin = scanStdin()
+		if code = execOpengrep(ctx, c, stderr); ctx.Err() != nil {
+			fmt.Fprintln(stderr, "gogrep: interrupted")
+			return 130
+		}
+	} else {
+		c.Foreground = true
+		code = execOpengrep(context.Background(), c, stderr)
+	}
 
+	// A command that asked for SARIF and exited 0 without it failed, as
+	// when opengrep's processes were killed behind its launcher's back.
+	noSARIF := false
 	if sarifStdout {
 		data := sarif.Bytes()
+		_, err := ruletest.DecodeSARIF(data)
+		noSARIF = err != nil
 		if rebranded, err := rebrand(data); err == nil {
 			data = append(rebranded, '\n')
 		}
 		stdout.Write(data)
 	}
 	for _, f := range sarifFiles {
-		if err := rebrandFile(f); err != nil && !errors.Is(err, os.ErrNotExist) {
+		valid, err := rebrandFile(f)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintf(stderr, "gogrep: rewriting SARIF %s: %v\n", f, err)
 		}
+		noSARIF = noSARIF || !valid
+	}
+	if code == 0 && noSARIF {
+		fmt.Fprintln(stderr, "gogrep: opengrep exited 0 but wrote no SARIF")
+		return 2
 	}
 	return code
 }
 
-// execOpengrep runs opengrep with args, gogrep's stdin and the given stdout
-// and stderr, and returns its exit code.
-func execOpengrep(args []string, stdout, stderr io.Writer) int {
+// execOpengrep runs c with the opengrep that gogrep runs, in its environment,
+// and returns opengrep's exit code, or 1 when opengrep cannot run. A
+// Foreground c reads gogrep's stdin and shares gogrep's process group, so a
+// terminal's Ctrl-C reaches opengrep directly; gogrep then ignores SIGINT and
+// SIGTERM, to report opengrep's exit status.
+func execOpengrep(ctx context.Context, c *opengrep.Cmd, stderr io.Writer) int {
 	bin, err := opengrepBin()
 	if err != nil {
 		fmt.Fprintf(stderr, "gogrep: %v\n", err)
 		return 1
 	}
-	cmd := exec.Command(bin, args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stdout, stderr
-	cmd.Env = opengrep.UTF8Env(os.Environ())
-
-	// The child shares our process group and receives Ctrl-C directly;
-	// keep the wrapper alive so it can report the child's exit status.
-	signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
-
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) {
-			fmt.Fprintf(stderr, "gogrep: %v\n", err)
-			return 1
-		}
-		return exitErr.ExitCode()
+	c.Path, c.Env = bin, opengrep.UTF8Env(os.Environ())
+	if c.Foreground {
+		c.Stdin = os.Stdin
+		signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
 	}
-	return 0
+	err = c.Run(ctx)
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil:
+		return 0
+	case errors.As(err, &exitErr):
+		return exitErr.ExitCode()
+	case ctx.Err() == nil:
+		fmt.Fprintf(stderr, "gogrep: %v\n", err)
+	}
+	return 1
+}
+
+// interruptContext returns a context that is done once gogrep receives one
+// of its interrupts. A signal gogrep was started with ignored, as nohup
+// does SIGHUP, stays ignored; given no signals at all, NotifyContext would
+// catch every one.
+func interruptContext() (context.Context, context.CancelFunc) {
+	if sigs := slices.DeleteFunc(slices.Clone(interrupts), signal.Ignored); len(sigs) > 0 {
+		return signal.NotifyContext(context.Background(), sigs...)
+	}
+	return context.Background(), func() {}
+}
+
+// scanStdin returns the stdin of a scan's opengrep: gogrep's, unless that is
+// a terminal, or another character device such as the null device. A
+// background process group that reads its terminal is stopped (SIGTTIN).
+func scanStdin() io.Reader {
+	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
+		return os.Stdin
+	}
+	return nil
 }
 
 // opengrepBin resolves the wrapped binary: $OPENGREP_BIN, then the binary

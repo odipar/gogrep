@@ -8,9 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -165,14 +163,9 @@ func runFixtures(fixtures []*ruletest.Fixture, a testArgs, sel selection, stdout
 		t.Config = configs[t.Rule]
 	}
 
-	// A scan leaves Ctrl-C to its one opengrep process; gogrep test catches
-	// it, stops its opengrep processes and reports the tests that finished.
-	// A signal gogrep was started with ignored, as nohup does SIGHUP, stays
-	// ignored; given no signals at all, NotifyContext would catch every one.
-	ctx, stop := context.Background(), context.CancelFunc(func() {})
-	if sigs := slices.DeleteFunc(slices.Clone(interrupts), signal.Ignored); len(sigs) > 0 {
-		ctx, stop = signal.NotifyContext(ctx, sigs...)
-	}
+	// An interrupt stops the opengrep processes, and the tests that
+	// finished are reported.
+	ctx, stop := interruptContext()
 	defer stop()
 	code := r.Run(ctx, tests, stdout, stderr)
 	if code != 130 && len(a.paths) == 0 && !active {

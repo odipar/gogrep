@@ -106,7 +106,7 @@ func TestWithRules(t *testing.T) {
 				}
 				return
 			}
-			want := slices.Concat([]string{"scan", "--config", "<abs config>", "--no-rewrite-rule-ids", "--exclude=opengrep/gogrep/rules/test"}, tt.want)
+			want := slices.Concat([]string{"scan", "--config", "<abs config>", "--no-rewrite-rule-ids", "--disable-version-check", "--exclude=opengrep/gogrep/rules/test"}, tt.want)
 			if len(got) > 2 && filepath.IsAbs(got[2]) {
 				got[2] = "<abs config>"
 			}

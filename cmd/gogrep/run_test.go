@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -17,8 +20,13 @@ import (
 )
 
 // TestMain lets the test binary stand in for opengrep: run as $OPENGREP_BIN
-// with GOGREP_TEST_FAKE_OPENGREP=1, it is fakeOpengrep.
+// with GOGREP_TEST_FAKE_OPENGREP=1, it is fakeOpengrep. Run with
+// GOGREP_TEST_SIGPROBE=1, it prints whether it started with SIGINT ignored.
 func TestMain(m *testing.M) {
+	if os.Getenv("GOGREP_TEST_SIGPROBE") == "1" {
+		fmt.Println(signal.Ignored(os.Interrupt))
+		os.Exit(0)
+	}
 	if os.Getenv("GOGREP_TEST_FAKE_OPENGREP") == "1" {
 		os.Exit(fakeOpengrep(os.Args[1:]))
 	}
@@ -37,25 +45,57 @@ func TestMain(m *testing.M) {
 }
 
 // fakeOpengrep prints its args to stdout, one per line, or with --sarif a
-// SARIF log from tool "opengrep" that holds them as properties.args. It
-// writes "fake stderr" to stderr and exits with $GOGREP_TEST_FAKE_EXIT. With
-// $GOGREP_TEST_FAKE_WAIT set, it first creates that file and waits a minute.
+// SARIF log from tool "opengrep" that holds them as properties.args; the log
+// goes to the files that -o/--output and --sarif-output name instead, mode
+// 0o644, as gogrep finds them with sarifTargets. With
+// $GOGREP_TEST_FAKE_NO_SARIF=1 it writes no log. It writes "fake stderr" to
+// stderr and exits with $GOGREP_TEST_FAKE_EXIT. With $GOGREP_TEST_FAKE_STDIN=1
+// it first reports up to 4 bytes of its stdin on stderr. With
+// $GOGREP_TEST_FAKE_WAIT set, it first creates that file and waits a minute;
+// with $GOGREP_TEST_FAKE_CHILD=1 too, it first starts sleep 60, as opengrep's
+// launcher starts opengrep-cli and opengrep-core, and writes its pid there.
 func fakeOpengrep(args []string) int {
+	if os.Getenv("GOGREP_TEST_FAKE_STDIN") == "1" {
+		in, _ := io.ReadAll(io.LimitReader(os.Stdin, 4))
+		fmt.Fprintf(os.Stderr, "stdin %q\n", in)
+	}
 	if p := os.Getenv("GOGREP_TEST_FAKE_WAIT"); p != "" {
-		os.WriteFile(p, nil, 0o600)
+		var pid []byte
+		if os.Getenv("GOGREP_TEST_FAKE_CHILD") == "1" {
+			child := exec.Command("sleep", "60")
+			child.Stdout = os.Stdout
+			if err := child.Start(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			pid = strconv.AppendInt(nil, int64(child.Process.Pid), 10)
+		}
+		if os.WriteFile(p+".tmp", pid, 0o600) != nil || os.Rename(p+".tmp", p) != nil {
+			return 2
+		}
 		time.Sleep(time.Minute)
 	}
-	if slices.Contains(args, "--sarif") {
-		json.NewEncoder(os.Stdout).Encode(map[string]any{
+	files, toStdout := sarifTargets(args)
+	if !slices.Contains(args, "--sarif") {
+		for _, a := range args {
+			fmt.Println(a)
+		}
+	}
+	if os.Getenv("GOGREP_TEST_FAKE_NO_SARIF") != "1" {
+		log, _ := json.Marshal(map[string]any{
 			"version": "2.1.0",
 			"runs": []any{map[string]any{
 				"tool":       map[string]any{"driver": map[string]any{"name": "opengrep"}},
 				"properties": map[string]any{"args": args},
 			}},
 		})
-	} else {
-		for _, a := range args {
-			fmt.Println(a)
+		if toStdout {
+			fmt.Printf("%s\n", log)
+		}
+		for _, f := range files {
+			if os.WriteFile(f, log, 0o644) != nil || os.Chmod(f, 0o644) != nil {
+				return 2
+			}
 		}
 	}
 	fmt.Fprintln(os.Stderr, "fake stderr")
@@ -152,7 +192,7 @@ func TestRunScan(t *testing.T) {
 		if len(args) > 2 && filepath.IsAbs(args[2]) {
 			args[2] = "<abs config>"
 		}
-		want := []string{"scan", "--config", "<abs config>", "--no-rewrite-rule-ids", "--exclude=opengrep/gogrep/rules/test", "--sarif", "."}
+		want := []string{"scan", "--config", "<abs config>", "--no-rewrite-rule-ids", "--disable-version-check", "--exclude=opengrep/gogrep/rules/test", "--sarif", "."}
 		if !slices.Equal(args, want) {
 			t.Errorf("opengrep args = %q, want %q", args, want)
 		}
@@ -172,6 +212,115 @@ func TestRunScan(t *testing.T) {
 			t.Errorf("gogrep scan = %d, stderr %q; want 1 and a gogrep: error", code, stderr)
 		}
 	})
+}
+
+// gogrep rewrites the SARIF files opengrep writes for owner only, and a
+// command that asked for SARIF and exited 0 without it fails.
+func TestRunSARIFChecks(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	t.Run("files rebranded, owner only", func(t *testing.T) {
+		useFakeOpengrep(t, 0)
+		code, stdout, stderr := runGogrep("scan", "--config", "r.yaml", "--sarif", "-o", "out.sarif", "--sarif-output=more.sarif", ".")
+		if code != 0 || stdout != "" || stderr != "fake stderr\n" {
+			t.Errorf("gogrep scan = %d, %q, %q; want 0, no stdout, %q", code, stdout, stderr, "fake stderr\n")
+		}
+		for _, f := range []string{"out.sarif", "more.sarif"} {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if driver, _ := sarifRun(t, string(data)); driver != toolName {
+				t.Errorf("%s: SARIF driver = %q, want %q", f, driver, toolName)
+			}
+			if fi, err := os.Stat(f); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+				t.Errorf("%s has mode %v, %v; want 0600", f, fi.Mode().Perm(), err)
+			}
+		}
+	})
+
+	const noSARIF = "gogrep: opengrep exited 0 but wrote no SARIF\n"
+	for _, tt := range []struct {
+		args   []string
+		exit   int
+		code   int
+		stderr string
+	}{
+		{[]string{"scan", "--config", "r.yaml", "--sarif", "."}, 0, 2, "fake stderr\n" + noSARIF},
+		{[]string{"scan", "--config", "r.yaml", "--sarif", "-o", "missing.sarif", "."}, 0, 2, "fake stderr\n" + noSARIF},
+		{[]string{"ci", "--sarif-output", "missing.sarif"}, 0, 2, "fake stderr\n" + noSARIF},
+		{[]string{"scan", "--config", "r.yaml", "--sarif", "."}, 3, 3, "fake stderr\n"},
+		{[]string{"scan", "--config", "r.yaml", "--sarif-output=https://example.com/sarif", "."}, 0, 0, "fake stderr\n"},
+		{[]string{"scan", "--config", "r.yaml", "."}, 0, 0, "fake stderr\n"},
+	} {
+		t.Run(fmt.Sprintf("no SARIF, exit %d, %s", tt.exit, strings.Join(tt.args, " ")), func(t *testing.T) {
+			useFakeOpengrep(t, tt.exit)
+			t.Setenv("GOGREP_TEST_FAKE_NO_SARIF", "1")
+			if code, _, stderr := runGogrep(tt.args...); code != tt.code || stderr != tt.stderr {
+				t.Errorf("gogrep %q = %d, %q; want %d, %q", tt.args, code, stderr, tt.code, tt.stderr)
+			}
+		})
+	}
+
+	t.Run("not SARIF", func(t *testing.T) {
+		useFakeOpengrep(t, 0)
+		if err := os.WriteFile("bad.sarif", []byte(`{"version": "2.0.0", "runs": []}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("GOGREP_TEST_FAKE_NO_SARIF", "1")
+		code, _, stderr := runGogrep("scan", "--config", "r.yaml", "--sarif-output", "bad.sarif", ".")
+		if code != 2 || stderr != "fake stderr\n"+noSARIF {
+			t.Errorf("gogrep scan = %d, %q; want 2, %q", code, stderr, "fake stderr\n"+noSARIF)
+		}
+	})
+}
+
+// A scan's opengrep, which runs in a background process group, reads
+// gogrep's stdin unless that is a terminal or another character device;
+// every other command reads gogrep's stdin.
+func TestRunStdin(t *testing.T) {
+	useFakeOpengrep(t, 0)
+	t.Setenv("GOGREP_TEST_FAKE_STDIN", "1")
+	dir := t.TempDir()
+	t.Chdir(dir)
+	file := filepath.Join(dir, "stdin")
+	if err := os.WriteFile(file, []byte("file contents"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		stdin string
+		args  []string
+		want  string // what opengrep reads
+	}{
+		{file, []string{"scan", "--config", "r.yaml", "."}, "file"},
+		{file, []string{"opengrep", "scan", "."}, "file"},
+	}
+	if runtime.GOOS != "windows" {
+		// A character device that, unlike the null device, has data.
+		tests = append(tests, []struct {
+			stdin string
+			args  []string
+			want  string
+		}{
+			{"/dev/zero", []string{"scan", "--config", "r.yaml", "."}, ""},
+			{"/dev/zero", []string{"opengrep", "scan", "."}, "\x00\x00\x00\x00"},
+			{"/dev/zero", []string{"--version"}, "\x00\x00\x00\x00"},
+		}...)
+	}
+	saved := os.Stdin
+	t.Cleanup(func() { os.Stdin = saved })
+	for _, tt := range tests {
+		f, err := os.Open(tt.stdin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Stdin = f
+		code, _, stderr := runGogrep(tt.args...)
+		f.Close()
+		if want := fmt.Sprintf("stdin %q\nfake stderr\n", tt.want); code != 0 || stderr != want {
+			t.Errorf("gogrep %q < %s = %d, %q; want 0, %q", tt.args, tt.stdin, code, stderr, want)
+		}
+	}
 }
 
 func TestRunRulesAndSuites(t *testing.T) {
