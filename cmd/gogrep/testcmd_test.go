@@ -125,13 +125,15 @@ func requireOpengrep(t *testing.T) {
 			pinSkip = "reading opengrep.json: " + err.Error()
 			return
 		}
-		info, err := newTestCLI(t).eng.Opengrep(context.Background())
+		info, env, err := newTestCLI(t).eng.OpengrepEnv(context.Background())
 		if err != nil {
 			pinSkip = "no opengrep: " + err.Error()
 			return
 		}
 		bin := info.Path
-		out, err := exec.Command(bin, "--version").Output()
+		cmd := exec.Command(bin, "--version")
+		cmd.Env = env
+		out, err := cmd.Output()
 		if v := strings.TrimSpace(string(out)); err != nil || "v"+v != pin.Version {
 			pinSkip = fmt.Sprintf("%s --version = %q, %v; the golden files need opengrep %s", bin, v, err, pin.Version)
 		}

@@ -52,12 +52,47 @@ jobs:
             exit 1
           fi
 
-      - name: Test
-        run: go test -tags gogrep_bundled ./...
-
       - name: Build gogrep with the pinned opengrep
         # A directory output adds .exe on Windows.
         run: go build -tags gogrep_bundled -o "$RUNNER_TEMP/bin/" .
+
+      - name: Scan four times at once with a cold cache
+        # opengrep unpacks its runtime on its first run, and runs that start
+        # meanwhile crashed (2 of 4, SIGBUS) before gogrep prepared the
+        # runtime once, privately, in its cache. Windows cannot move the
+        # runtime, which this step finds cold as it runs before the tests:
+        # there gogrep marks it ready instead.
+        run: |
+          cold="$RUNNER_TEMP/cold"
+          mkdir -p "$cold"
+          pids=()
+          for i in 1 2 3 4; do
+            HOME="$cold" XDG_CACHE_HOME="$cold" LocalAppData="$cold" \
+              "$RUNNER_TEMP/bin/gogrep" scan --sarif . > "$cold/$i.sarif" 2> "$cold/$i.err" &
+            pids+=($!)
+          done
+          failed=0
+          for i in 1 2 3 4; do
+            if ! wait "${pids[$((i - 1))]}" || ! grep -q '"version": *"2.1.0"' "$cold/$i.sarif"; then
+              echo "::error::scan $i failed"
+              cat "$cold/$i.err"
+              failed=1
+            fi
+          done
+          if [ "$RUNNER_OS" = Windows ]; then
+            ready=$(find "$cold" -path '*/gogrep/runtime-*.ready')
+          else
+            ready=$(find "$cold" -path '*/gogrep/runtime-*/opengrep/v*' -prune)
+          fi
+          if [ -z "$ready" ]; then
+            echo "::error::gogrep prepared no runtime in its cache"
+            failed=1
+          fi
+          echo "prepared: $ready"
+          exit $failed
+
+      - name: Test
+        run: go test -tags gogrep_bundled ./...
 
       - name: Run the example rule tests
         run: cd testdata/project && "$RUNNER_TEMP/bin/gogrep" test

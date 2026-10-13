@@ -1,8 +1,15 @@
 package engine
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"slices"
 
+	"github.com/odipar/gogrep/internal/opengrep"
 	"github.com/odipar/gogrep/internal/rules"
 	"github.com/odipar/gogrep/internal/ruletest"
 )
@@ -68,4 +75,46 @@ func (e *Engine) PlanTests(dir string, fixtures []*ruletest.Fixture, sel Selecti
 		untested = ruletest.Untested(env.Sets["project"], tests)
 	}
 	return tests, untested, nil
+}
+
+// OpengrepEnv returns the opengrep that a Command runs, prepared as Opengrep
+// prepares it, and the environment it runs in: Config.Env, the locale fix,
+// and XDG_CACHE_HOME pointing at the prepared runtime.
+func (e *Engine) OpengrepEnv(ctx context.Context) (*OpengrepInfo, []string, error) {
+	info, xdg, err := e.opengrep(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return info, withRuntime(opengrep.UTF8Env(e.env), xdg), nil
+}
+
+// TestExec returns the opengrep that Test runs, prepared as Opengrep
+// prepares it, and how Test runs it for each fixture: in a process group of
+// its own that a done ctx kills, without the SEMGREP_* and OPENGREP_*
+// variables of Config.Env, and with a log file of its own.
+func (e *Engine) TestExec(ctx context.Context) (string, ruletest.Exec, error) {
+	info, xdg, err := e.opengrep(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	env := withRuntime(opengrep.UTF8Env(opengrep.HermeticEnv(e.env)), xdg)
+	run := func(ctx context.Context, dir string, args []string) (stdout, stderr []byte, code int, err error) {
+		if e.cacheErr != nil {
+			return nil, nil, 0, e.cacheErr
+		}
+		log, err := opengrep.LogFile(e.cacheDir)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		defer os.Remove(log)
+		var out, errb bytes.Buffer
+		c := &opengrep.Cmd{Path: args[0], Args: args[1:], Dir: dir, Env: append(slices.Clip(env), "SEMGREP_LOG_FILE="+log), Stdout: &out, Stderr: &errb}
+		err = c.Run(ctx)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.Exited() {
+			return out.Bytes(), errb.Bytes(), exitErr.ExitCode(), nil
+		}
+		return out.Bytes(), errb.Bytes(), 0, err
+	}
+	return info.Path, run, nil
 }

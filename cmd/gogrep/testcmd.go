@@ -1,20 +1,15 @@
 package gogrep
 
 import (
-	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/odipar/gogrep/internal/engine"
-	"github.com/odipar/gogrep/internal/opengrep"
 	"github.com/odipar/gogrep/internal/ruletest"
 )
 
@@ -153,15 +148,16 @@ func (c *cli) runFixtures(fixtures []*ruletest.Fixture, a testArgs, sel selectio
 	// finished are reported.
 	ctx, stop := interruptContext()
 	defer stop()
-	r := &ruletest.Runner{Exec: execFixture, Threads: a.threads, Learn: a.learn, KeepSARIF: a.keepSARIF}
+	r := &ruletest.Runner{Threads: a.threads, Learn: a.learn, KeepSARIF: a.keepSARIF}
 	if slices.ContainsFunc(tests, func(t *ruletest.Test) bool { return t.Rule != nil }) {
 		// A missing opengrep is an error, rather than a failure of every
 		// test; tests that fail before opengrep runs need none.
-		info, err := c.eng.Opengrep(ctx)
-		if err != nil {
+		if r.Bin, r.Exec, err = c.eng.TestExec(ctx); ctx.Err() != nil {
+			fmt.Fprintln(c.stderr, "gogrep: interrupted")
+			return 130, nil
+		} else if err != nil {
 			return 0, err
 		}
-		r.Bin = info.Path
 	}
 	report := &testReport{stdout: c.stdout, stderr: c.stderr, total: len(tests), showOutput: a.showOutput}
 	report.start()
@@ -189,17 +185,4 @@ func accept(fixtures []*ruletest.Fixture, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Accepted %s\n", a.Name)
 	}
 	return code
-}
-
-// execFixture runs opengrep for one fixture, as ruletest.Exec describes, in
-// a process group of its own that cancelling ctx kills.
-func execFixture(ctx context.Context, dir string, args []string) (stdout, stderr []byte, code int, err error) {
-	var out, errb bytes.Buffer
-	c := &opengrep.Cmd{Path: args[0], Args: args[1:], Dir: dir, Env: opengrep.UTF8Env(os.Environ()), Stdout: &out, Stderr: &errb}
-	err = c.Run(ctx)
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.Exited() {
-		return out.Bytes(), errb.Bytes(), exitErr.ExitCode(), nil
-	}
-	return out.Bytes(), errb.Bytes(), 0, err
 }

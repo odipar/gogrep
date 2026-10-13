@@ -163,14 +163,14 @@ func (c *cli) forward(args []string, sel selection) int {
 // group, so a terminal's Ctrl-C reaches opengrep directly; gogrep then
 // ignores SIGINT and SIGTERM, to report opengrep's exit status.
 func (c *cli) execOpengrep(ctx context.Context, oc *opengrep.Cmd) int {
-	info, err := c.eng.Opengrep(ctx)
+	info, env, err := c.eng.OpengrepEnv(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
 			fmt.Fprintf(c.stderr, "gogrep: %v\n", err)
 		}
 		return 1
 	}
-	oc.Path, oc.Env = info.Path, opengrep.UTF8Env(os.Environ())
+	oc.Path, oc.Env = info.Path, env
 	if oc.Foreground {
 		oc.Stdin = os.Stdin
 		signal.Ignore(syscall.SIGINT, syscall.SIGTERM)

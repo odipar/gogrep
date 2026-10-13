@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,9 +34,19 @@ func TestMain(m *testing.M) {
 //     opengrep's launcher starts opengrep-cli and opengrep-core, writes its
 //     own pid and the child's to $GOGREP_TEST_PIDS, and sleeps;
 //   - orphan does as tree, but exits at once;
-//   - sleep sleeps for a minute.
+//   - sleep sleeps for a minute;
+//   - unpack is opengrep's first run, which unpack describes;
+//   - prepare calls PrepareRuntime with its arguments, the executable, its
+//     SHA-256 and the cache directory, and prints the result.
 func helper(mode string, args []string) int {
 	switch mode {
+	case "unpack":
+		return unpackHelper()
+	case "prepare":
+		env := append(os.Environ(), "GOGREP_TEST_HELPER=unpack")
+		xdg, err := PrepareRuntime(context.Background(), args[0], args[1], args[2], env, slog.New(slog.DiscardHandler))
+		fmt.Println(xdg, err)
+		return 0
 	case "echo":
 		wd, _ := os.Getwd()
 		in, _ := io.ReadAll(os.Stdin)

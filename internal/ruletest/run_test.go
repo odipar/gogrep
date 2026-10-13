@@ -271,10 +271,9 @@ func TestRunOrder(t *testing.T) {
 		r.Threads = threads
 		tests := r.addTests(t)
 		if threads >= len(tests) {
-			// After the first run, which runs alone, each waits until every
-			// later one has finished.
+			// Each run waits until every later one has finished.
 			var ran []*Test
-			for _, test := range tests[1:] {
+			for _, test := range tests {
 				if test.Rule != nil {
 					ran = append(ran, test)
 				}
@@ -294,26 +293,6 @@ func TestRunOrder(t *testing.T) {
 		}
 		vs, err := r.run(t, tests)
 		checkVerdicts(t, vs, err)
-	}
-}
-
-// The first opengrep run, which may unpack opengrep, runs alone.
-func TestRunFirstAlone(t *testing.T) {
-	t.Parallel()
-	r := newFakeRunner()
-	r.Threads = 8
-	tests := r.addTests(t)
-	var others int
-	r.fakes[tests[0].Dir].before = func(context.Context) {
-		time.Sleep(50 * time.Millisecond) // time enough for other runs to start
-		r.mu.Lock()
-		others = len(r.calls) - 1
-		r.mu.Unlock()
-	}
-	vs, err := r.run(t, tests)
-	checkVerdicts(t, vs, err)
-	if others != 0 {
-		t.Errorf("%d other opengrep runs started during the first", others)
 	}
 }
 

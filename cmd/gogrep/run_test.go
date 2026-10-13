@@ -2,6 +2,8 @@ package gogrep
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -65,7 +67,21 @@ func newTestCLI(t *testing.T) *cli {
 // $GOGREP_TEST_FAKE_WAIT set, it first creates that file and waits a minute;
 // with $GOGREP_TEST_FAKE_CHILD=1 too, it first starts sleep 60, as opengrep's
 // launcher starts opengrep-cli and opengrep-core, and writes its pid there.
+// The --version run that prepares opengrep's runtime, which has a log file,
+// it answers at once. With $GOGREP_TEST_FAKE_ENV, a comma-separated list of
+// names, it first reports those variables on stderr as NAME=value.
 func fakeOpengrep(args []string) int {
+	if log := os.Getenv("SEMGREP_LOG_FILE"); len(args) == 1 && args[0] == "--version" && log != "" {
+		if filepath.Base(log) == "log" || strings.HasPrefix(filepath.Base(log), "opengrep-") {
+			fmt.Println("1.30.2")
+			return 0
+		}
+	}
+	if names := os.Getenv("GOGREP_TEST_FAKE_ENV"); names != "" {
+		for _, name := range strings.Split(names, ",") {
+			fmt.Fprintf(os.Stderr, "%s=%s\n", name, os.Getenv(name))
+		}
+	}
 	if os.Getenv("GOGREP_TEST_FAKE_STDIN") == "1" {
 		in, _ := io.ReadAll(io.LimitReader(os.Stdin, 4))
 		fmt.Fprintf(os.Stderr, "stdin %q\n", in)
@@ -114,9 +130,11 @@ func fakeOpengrep(args []string) int {
 	return code
 }
 
-// useFakeOpengrep makes gogrep run fakeOpengrep as opengrep, exiting with code.
+// useFakeOpengrep makes gogrep run fakeOpengrep as opengrep, exiting with
+// code, with a cache of its own, which keeps the runtime prepared for it.
 func useFakeOpengrep(t *testing.T, code int) {
 	t.Helper()
+	isolateCache(t)
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -346,6 +364,50 @@ func TestRunConcurrently(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// Every opengrep that gogrep starts gets the runtime gogrep prepared for it
+// (except on Windows, which cannot move it); gogrep test runs opengrep
+// without the SEMGREP_* and OPENGREP_* variables, and with a log of its own.
+func TestRunEnv(t *testing.T) {
+	useFakeOpengrep(t, 0)
+	testProject(t, brokenFiles)
+	t.Setenv("SEMGREP_RULES", "r.yaml")
+	t.Setenv("OPENGREP_X", "x")
+	t.Setenv("GOGREP_TEST_FAKE_ENV", "SEMGREP_RULES,OPENGREP_X,SEMGREP_LOG_FILE,XDG_CACHE_HOME")
+	exe, err := os.Executable()
+	sum := sha256.New()
+	if err == nil {
+		var data []byte
+		data, err = os.ReadFile(exe)
+		sum.Write(data)
+	}
+	cache, err2 := os.UserCacheDir()
+	if err != nil || err2 != nil {
+		t.Fatal(err, err2)
+	}
+	cache = filepath.Join(cache, "gogrep")
+	xdg := filepath.Join(cache, "runtime-"+hex.EncodeToString(sum.Sum(nil))[:16])
+	if runtime.GOOS == "windows" {
+		xdg = ""
+	}
+
+	_, _, stderr := runGogrep("scan", "--config", "r.yaml", ".")
+	if want := "SEMGREP_RULES=r.yaml\nOPENGREP_X=x\nSEMGREP_LOG_FILE=\nXDG_CACHE_HOME=" + xdg + "\nfake stderr\n"; stderr != want {
+		t.Errorf("gogrep scan ran opengrep with\n%s\nwant\n%s", stderr, want)
+	}
+
+	_, stdout, _ := runGogrep("test", "--show-opengrep-output", testRoot+"/go/exec-command")
+	_, report, _ := strings.Cut(stdout, "\n  > ")
+	report = "> " + report
+	logs := filepath.Join(cache, "logs") + string(filepath.Separator) + "opengrep-"
+	if want := "> SEMGREP_RULES=\n  > OPENGREP_X=\n  > SEMGREP_LOG_FILE=" + logs; !strings.HasPrefix(report, want) ||
+		!strings.Contains(report, ".log\n  > XDG_CACHE_HOME="+xdg+"\n") {
+		t.Errorf("gogrep test ran opengrep with\n%s\nwant SEMGREP_RULES and OPENGREP_X unset, a log in %s, and XDG_CACHE_HOME=%s", report, logs, xdg)
+	}
+	if entries, err := os.ReadDir(filepath.Join(cache, "logs")); err != nil || len(entries) != 0 {
+		t.Errorf("gogrep test left logs %v, %v", entries, err)
+	}
 }
 
 func TestRunRulesAndSuites(t *testing.T) {

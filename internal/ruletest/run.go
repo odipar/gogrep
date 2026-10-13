@@ -84,7 +84,6 @@ func (r *Runner) Run(ctx context.Context, tests []*Test, report func(*Verdict)) 
 	}
 	go func() {
 		defer close(jobs)
-		first := true
 		for i, t := range tests {
 			if t.Rule == nil {
 				continue
@@ -93,16 +92,6 @@ func (r *Runner) Run(ctx context.Context, tests []*Test, report func(*Verdict)) 
 			case jobs <- i:
 			case <-ctx.Done():
 				return
-			}
-			// On its first run, opengrep unpacks itself into the user's
-			// cache, and runs that start meanwhile can crash (SIGBUS).
-			if first {
-				first = false
-				select {
-				case <-done[i]:
-				case <-ctx.Done():
-					return
-				}
 			}
 		}
 	}()

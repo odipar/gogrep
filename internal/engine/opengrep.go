@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 
 	"github.com/odipar/gogrep/internal/opengrep"
@@ -23,17 +24,42 @@ type OpengrepInfo struct {
 	Version string // the pinned version, such as "v1.30.2", when Pinned; "" otherwise
 }
 
-// Opengrep finds the opengrep executable, without using the network. It
-// tries, in order: Config.Opengrep; Config.EmbeddedOpengrep, written to
-// CacheDir; the pinned executable in CacheDir; opengrep on PATH, if its
-// SHA-256 is the pinned one or Config.AllowUnpinned is set. A checksum is
-// computed once per process for each path, size and modification time.
+// Opengrep finds the opengrep executable and prepares it to run, without
+// using the network. It tries, in order: Config.Opengrep;
+// Config.EmbeddedOpengrep, written to CacheDir; the pinned executable in
+// CacheDir; opengrep on PATH, if its SHA-256 is the pinned one or
+// Config.AllowUnpinned is set. A checksum is computed once per process for
+// each path, size and modification time. The first time an executable is
+// used with a CacheDir, Opengrep unpacks opengrep's runtime (about 245 MB
+// and 8 s) privately and publishes it there, so that concurrent opengrep
+// processes never start from a half-written runtime.
 //
 // Scan, Test and Command call Opengrep; call it yourself to fail early.
 // When no opengrep is found, it returns an error that wraps ErrNoOpengrep
 // and names the pinned version, platform, asset, checksum, cache path and
 // remedies.
 func (e *Engine) Opengrep(ctx context.Context) (*OpengrepInfo, error) {
+	info, _, err := e.opengrep(ctx)
+	return info, err
+}
+
+// opengrep returns the executable that Opengrep returns, and the
+// XDG_CACHE_HOME of its prepared runtime: "" for none, which leaves opengrep
+// where it keeps its runtime by itself.
+func (e *Engine) opengrep(ctx context.Context) (*OpengrepInfo, string, error) {
+	info, err := e.find(ctx)
+	if err != nil || e.cacheErr != nil {
+		return info, "", err
+	}
+	xdg, err := opengrep.PrepareRuntime(ctx, info.Path, info.SHA256, e.cacheDir, opengrep.UTF8Env(opengrep.HermeticEnv(e.env)), e.log)
+	if err != nil {
+		return nil, "", err
+	}
+	return info, xdg, nil
+}
+
+// find finds the executable that Opengrep returns.
+func (e *Engine) find(ctx context.Context) (*OpengrepInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -106,3 +132,11 @@ var musl = sync.OnceValue(func() bool {
 	root, ok := os.DirFS("/").(fs.StatFS)
 	return runtime.GOOS == "linux" && ok && pin.Musl(root, runtime.GOARCH)
 })
+
+// withRuntime returns env with XDG_CACHE_HOME set to xdg, unless xdg is "".
+func withRuntime(env []string, xdg string) []string {
+	if xdg == "" {
+		return env
+	}
+	return append(slices.Clip(env), "XDG_CACHE_HOME="+xdg)
+}
