@@ -5,7 +5,9 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -30,10 +32,95 @@ func fetchRules(set pin.RuleSet) error {
 			return nil
 		}
 	}
-
-	tmp, err := os.MkdirTemp("", "opengrep-rules-*")
+	data, n, err := packRules(set)
 	if err != nil {
 		return err
+	}
+	if err := os.WriteFile(out, data, 0o600); err != nil {
+		return err
+	}
+	fmt.Printf("rules: packed %d rule files (%d KB)\n", n, len(data)/1024)
+	return os.WriteFile(stamp, []byte(want), 0o600)
+}
+
+// checkRules packs the pinned rules commit again and checks that the
+// committed archive holds the same files with the same contents, and that its
+// stamp is the pin's. It compares what the archives hold, not their bytes,
+// which compress/flate does not promise to keep across Go releases.
+func checkRules(set pin.RuleSet) error {
+	if got, err := os.ReadFile(filepath.Join(rulesDir, set.Name+".commit")); err != nil || string(got) != set.Stamp() {
+		return fmt.Errorf("the stamp %s.commit is %q (%v), want %q", set.Name, got, err, set.Stamp())
+	}
+	committed, err := os.ReadFile(filepath.Join(rulesDir, set.Name+".tar.gz"))
+	if err != nil {
+		return err
+	}
+	have, err := listing(committed)
+	if err != nil {
+		return fmt.Errorf("%s.tar.gz: %w", set.Name, err)
+	}
+	packed, _, err := packRules(set)
+	if err != nil {
+		return err
+	}
+	want, err := listing(packed)
+	if err != nil {
+		return err
+	}
+	if !slices.Equal(have, want) {
+		var diff []string
+		for _, l := range have {
+			if !slices.Contains(want, l) {
+				diff = append(diff, "  committed only: "+l)
+			}
+		}
+		for _, l := range want {
+			if !slices.Contains(have, l) {
+				diff = append(diff, "  pinned commit only: "+l)
+			}
+		}
+		if len(diff) == 0 {
+			diff = append(diff, "  the same files in another order")
+		}
+		return fmt.Errorf("%s.tar.gz differs from %s@%s; run go run ./tools/fetch-opengrep and commit the result:\n%s",
+			set.Name, set.Repo, set.Commit, strings.Join(diff, "\n"))
+	}
+	fmt.Printf("rules: %s.tar.gz matches %s@%.12s (%d files)\n", set.Name, set.Repo, set.Commit, len(have))
+	return nil
+}
+
+// listing returns what a rule set archive holds, in order: each entry's name,
+// mode and SHA-256.
+func listing(archive []byte) ([]string, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		return nil, err
+	}
+	var entries []string
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return entries, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		h := sha256.New()
+		if _, err := io.Copy(h, tr); err != nil {
+			return nil, err
+		}
+		entries = append(entries, fmt.Sprintf("%s %o %x", hdr.Name, hdr.Mode, h.Sum(nil)))
+	}
+}
+
+// packRules clones the pinned rules commit and returns the deterministic
+// archive of its rule files and license files, and how many rule files it
+// holds.
+func packRules(set pin.RuleSet) ([]byte, int, error) {
+	tmp, err := os.MkdirTemp("", "opengrep-rules-*")
+	if err != nil {
+		return nil, 0, err
 	}
 	defer os.RemoveAll(tmp)
 
@@ -50,33 +137,26 @@ func fetchRules(set pin.RuleSet) error {
 		{"checkout", "-q", "FETCH_HEAD"},
 	} {
 		if _, err := git(args...); err != nil {
-			return fmt.Errorf("rules: git %s: %w", args[0], err)
+			return nil, 0, fmt.Errorf("rules: git %s: %w", args[0], err)
 		}
 	}
 	if head, err := git("rev-parse", "HEAD"); err != nil || head != set.Commit {
-		return fmt.Errorf("rules: checked out %q, pinned %s (%v)", head, set.Commit, err)
+		return nil, 0, fmt.Errorf("rules: checked out %q, pinned %s (%v)", head, set.Commit, err)
 	}
 
 	files, err := ruleFiles(tmp, set.Path, set.Lang)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	if len(files) == 0 {
-		return fmt.Errorf("no rule files found in %s/%s", set.Repo, set.Path)
+		return nil, 0, fmt.Errorf("no rule files found in %s/%s", set.Repo, set.Path)
 	}
 	n := len(files)
 	for _, l := range licenseFiles(tmp) {
 		files = append(files, entry{name: l, src: l})
 	}
 	data, err := tarGz(tmp, files)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(out, data, 0o600); err != nil {
-		return err
-	}
-	fmt.Printf("rules: packed %d rule files (%d KB)\n", n, len(data)/1024)
-	return os.WriteFile(stamp, []byte(want), 0o600)
+	return data, n, err
 }
 
 // licenseFiles returns the license and notice files at the repo root, which

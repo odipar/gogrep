@@ -553,8 +553,10 @@ that run opengrep take a `context.Context`.
   or substantially from those rules. See [NOTICE.md](NOTICE.md).
 
 The [package documentation](https://pkg.go.dev/github.com/odipar/gogrep)
-has the details, and a worked example of a command that scans many clones at
-once is in [docs/design/library-api.md](docs/design/library-api.md#6-worked-example-a-consumer-cli).
+has the details, and [testdata/consumer/main.go](testdata/consumer/main.go)
+is a worked example: a command that scans many clones at once and prints
+each finding as a JSON line. CI builds and runs it as a module that gets
+gogrep with `go get`.
 
 ## Building
 

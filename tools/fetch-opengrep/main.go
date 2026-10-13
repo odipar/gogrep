@@ -3,7 +3,8 @@
 // gogrep can be built with -tags gogrep_bundled. It also keeps the rule set
 // archives committed in internal/rulesets in step with opengrep.json: a rule
 // set whose stamp is not its pin's is fetched at the pinned git commit,
-// verified and packed again, for you to commit.
+// verified and packed again, for you to commit. With -check-rules, it only
+// checks that each committed archive holds what its pinned commit does.
 //
 // Usage:
 //
@@ -12,11 +13,13 @@
 //	go run ./tools/fetch-opengrep linux/amd64 ...  # specific platforms
 //	go run ./tools/fetch-opengrep linux/amd64/musl # musl (Alpine) variant
 //	go run ./tools/fetch-opengrep -pin v1.31.0     # re-pin the config to another release
+//	go run ./tools/fetch-opengrep -check-rules     # check the committed rule set archives
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"maps"
@@ -40,9 +43,16 @@ const (
 func main() {
 	configPath := flag.String("config", "opengrep.json", "pin config `file`")
 	tag := flag.String("pin", "", "re-pin the config to this opengrep release `tag` and exit")
+	check := flag.Bool("check-rules", false, "fetch each pinned rule set again, check that its committed archive holds the same files, and exit")
 	flag.Parse()
 
-	if err := run(*configPath, *tag, flag.Args()); err != nil {
+	var err error
+	if *check {
+		err = checkAll(*configPath)
+	} else {
+		err = run(*configPath, *tag, flag.Args())
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "fetch-opengrep: %v\n", err)
 		os.Exit(1)
 	}
@@ -82,6 +92,21 @@ func run(configPath, tag string, platforms []string) error {
 		}
 	}
 	return nil
+}
+
+// checkAll checks every rule set that the config at configPath pins.
+func checkAll(configPath string) error {
+	cfg, err := readConfig(configPath)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, r := range cfg.Rules {
+		if err := checkRules(r); err != nil {
+			errs = append(errs, fmt.Errorf("rules %s: %w", r.Name, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func readConfig(path string) (*pin.Pins, error) {
