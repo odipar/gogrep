@@ -1897,6 +1897,8 @@ After each `v*` tag, a release smoke job runs `go get github.com/odipar/gogrep@$
 
 ### 8.3 Open questions (each with its recommended default)
 
+**Resolved (2026-10-13):** the maintainer chose the recommended default for all three questions below, and the package layout of §2 (the module root is the library; the command is `cmd/gogrep`, `package main`).
+
 1. **Should project rules and suites stay on by default in the library?**
    - **Recommended: yes.** `NoProjectRules` opts out per call, for parity with the CLI and because #5 lists them. The documentation and §6 show `NoProjectRules` for clones.
    - The alternative is an opt-in `TrustProject` field. It is safer for scanning services but differs from the CLI.
