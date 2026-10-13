@@ -42,17 +42,28 @@ type Fixture struct {
 // that fails at SETUP, and so are a symlink outside every fixture, which
 // would hide the fixtures it leads to, and a fixture that breaks a rule of
 // the design's §2.3. It is an error when root is not a directory or is
-// spelled in another letter case, when a path does not exist, lies outside
-// root or selects no test, or when there are no tests at all.
+// spelled in another letter case, when a directory next to it bears its name
+// in another letter case, when a path does not exist, lies outside root or
+// selects no test, or when there are no tests at all.
 func Discover(root string, paths []string) ([]*Fixture, error) {
 	t := &tree{root: root, name: path.Clean(filepath.ToSlash(root)), entries: map[string]fs.DirEntry{}}
 	// On a case-insensitive file system the root could be a Test
 	// directory, which scans do not exclude. Refuse it, as case-sensitive
-	// file systems do.
+	// file systems do. On a case-sensitive one a Test directory next to the
+	// root is refused too: neither rule loading nor gogrep test reads it.
 	siblings, _ := os.ReadDir(filepath.Dir(root))
+	base := filepath.Base(root)
+	exact := slices.ContainsFunc(siblings, func(e fs.DirEntry) bool { return e.Name() == base })
 	for _, e := range siblings {
-		if base := filepath.Base(root); e.Name() != base && strings.EqualFold(e.Name(), base) {
-			return nil, fmt.Errorf("%s must be spelled %s", path.Join(path.Dir(t.name), e.Name()), t.name)
+		if e.Name() == base || !strings.EqualFold(e.Name(), base) {
+			continue
+		}
+		other := path.Join(path.Dir(t.name), e.Name())
+		if !exact {
+			return nil, fmt.Errorf("%s must be spelled %s", other, t.name)
+		}
+		if e.IsDir() {
+			return nil, fmt.Errorf("%s is reserved: rules in it do not load, and fixtures belong in %s", other, t.name)
 		}
 	}
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {

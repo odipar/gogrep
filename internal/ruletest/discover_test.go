@@ -314,6 +314,30 @@ func TestDiscoverLinkedPaths(t *testing.T) {
 	}
 }
 
+// On a case-sensitive file system a Test directory can sit next to the test
+// root. It is reserved, since nothing reads it; a file named so is not.
+func TestDiscoverRootCaseVariant(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTree(t, testRoot, map[string]string{"go/x/rule.ref": "x\n", "go/x/a.go": "package a\n"})
+	upper := filepath.Join(filepath.Dir(testRoot), "TEST")
+	if err := os.WriteFile(upper, nil, 0o600); err != nil {
+		t.Skipf("the file system ignores case: %v", err)
+	}
+	if _, err := Discover(testRoot, nil); err != nil {
+		t.Errorf("Discover with a TEST file next to the test root: %v", err)
+	}
+	if err := os.Remove(upper); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(upper, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	want := "opengrep/gogrep/rules/TEST is reserved: rules in it do not load, and fixtures belong in opengrep/gogrep/rules/test"
+	if _, err := Discover(testRoot, nil); errText(err) != want {
+		t.Errorf("Discover with a TEST directory next to the test root: %q, want %q", errText(err), want)
+	}
+}
+
 func TestDiscoverRoot(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if _, err := Discover(testRoot, nil); errText(err) != "no opengrep/gogrep/rules/test directory here; run gogrep test from the project root" {
