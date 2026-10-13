@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"sync"
+	"time"
 )
 
 // An IntegrityError reports an opengrep executable whose SHA-256 is not the
@@ -84,4 +86,20 @@ func remember(path string, fi os.FileInfo, sum string) {
 		fileSums.m = map[fileKey]string{}
 	}
 	fileSums.m[keyOf(path, fi)] = sum
+}
+
+// inPlace reports whether the file at path has the SHA-256 sum, after a
+// rename onto it failed: when another process or goroutine won the race, its
+// file is there. On Windows, the winner's rename can keep the file from
+// being opened for a moment, so inPlace tries for about half a second.
+func inPlace(path, sum string) bool {
+	for wait := 10 * time.Millisecond; ; wait *= 2 {
+		if got, err := FileSHA256(path); err == nil && got == sum {
+			return true
+		}
+		if runtime.GOOS != "windows" || wait > 300*time.Millisecond {
+			return false
+		}
+		time.Sleep(wait)
+	}
 }

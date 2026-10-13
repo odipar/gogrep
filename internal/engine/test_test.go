@@ -169,8 +169,9 @@ func TestTestErrors(t *testing.T) {
 	}
 }
 
-// treeState returns the names, modes, sizes and modification times of the
-// files under dir.
+// treeState returns the names of the files and directories under dir, and
+// the modes, sizes and modification times of the files. (Windows updates a
+// directory's time lazily.)
 func treeState(t *testing.T, dir string) string {
 	t.Helper()
 	var b strings.Builder
@@ -179,10 +180,14 @@ func treeState(t *testing.T, dir string) string {
 			return err
 		}
 		fi, err := d.Info()
-		if err != nil {
+		switch {
+		case err != nil:
 			return err
+		case d.IsDir():
+			fmt.Fprintf(&b, "%s/\n", p)
+		default:
+			fmt.Fprintf(&b, "%s %v %d %d\n", p, fi.Mode(), fi.Size(), fi.ModTime().UnixNano())
 		}
-		fmt.Fprintf(&b, "%s %v %d %d\n", p, fi.Mode(), fi.Size(), fi.ModTime().UnixNano())
 		return nil
 	})
 	if err != nil {

@@ -66,7 +66,7 @@ func Extract(dir string, data []byte, pinned ...string) (path, sum string, err e
 		return "", "", err
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
-		if got, verr := FileSHA256(path); verr == nil && got == sum {
+		if inPlace(path, sum) {
 			return path, sum, nil
 		}
 		return "", "", err

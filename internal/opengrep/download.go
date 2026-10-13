@@ -80,7 +80,7 @@ func (d *Download) Fetch(ctx context.Context, path string) error {
 		return err
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
-		if got, verr := FileSHA256(path); verr == nil && got == d.SHA256 {
+		if inPlace(path, d.SHA256) {
 			return nil
 		}
 		return err
