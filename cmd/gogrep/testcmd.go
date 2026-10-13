@@ -156,7 +156,7 @@ func runFixtures(fixtures []*ruletest.Fixture, a testArgs, sel selection, stdout
 			}
 		}
 		if configs[t.Rule] == "" {
-			if configs[t.Rule], err = rules.Write([]*rules.Rule{t.Rule}); err != nil {
+			if configs[t.Rule], err = writeRules([]*rules.Rule{t.Rule}); err != nil {
 				return 0, fmt.Errorf("writing rule %s: %w", t.Rule.ID, err)
 			}
 		}

@@ -131,13 +131,23 @@ func withRules(args []string, sel selection) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	file, err := rules.Write(selected)
+	file, err := writeRules(selected)
 	if err != nil {
 		return nil, fmt.Errorf("writing selected rules: %w", err)
 	}
 	// Insert right after "scan": after a user's "--" they would be targets.
 	own := []string{"--config", file, "--no-rewrite-rule-ids", "--disable-version-check", "--exclude=" + filepath.ToSlash(projectTestsDir)}
 	return slices.Concat(out[:1], own, out[1:]), nil
+}
+
+// writeRules writes rs to one opengrep config file among gogrep's rule
+// selections in the user cache directory, as rules.Write does.
+func writeRules(rs []*rules.Rule) (string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return rules.Write(filepath.Join(cache, "gogrep", "selections"), rs)
 }
 
 var errNoRules = errors.New("the --suite/--rule/--gogrep-* selection matches no rules")
