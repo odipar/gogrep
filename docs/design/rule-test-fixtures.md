@@ -50,7 +50,7 @@ Design for #2.
 | Test root | `opengrep/gogrep/rules/test/`, relative to the current directory. This is the same anchor the `project` rule set uses. |
 | Fixture | A directory under the test root that contains an entry named `rule.ref`. Each fixture is one test, and its name is its slash path relative to the cwd, for example `opengrep/gogrep/rules/test/go/exec-command`. |
 | Namespace | The path between the test root and the fixture, one or more segments, for example `go` or `go/net`. It mirrors `opengrep/gogrep/rules/<namespace>/` and takes part in resolving the rule (§3.2). |
-| Reserved files | At the fixture root: `rule.ref`, and every name that starts with `expected` or `actual`. gogrep reads `expected.txt` and writes `actual.txt` and `actual.sarif`. Any other `expected*` or `actual*` name at the fixture root (for example a misspelt `expected.text`) is a `SETUP` failure, so a typo cannot pass silently. |
+| Reserved files | At the fixture root: `rule.ref`, and every name that starts with `expected` or `actual`. gogrep reads `expected.txt` and writes `actual.txt` and `actual.sarif`. Any other `expected*` or `actual*` name at the fixture root (for example a misspelt `expected.text`) is a `SETUP` failure, so a typo cannot pass silently. So is a name that differs from `expected.txt`, `actual.txt` or `actual.sarif` only in case (`Expected.txt`), which a case-insensitive file system would read as `expected.txt` and others would not. |
 | Ignored files | Anywhere in a fixture: `.DS_Store`, `Thumbs.db` and `desktop.ini` (case-insensitive). At the fixture root: gogrep's own temp files, `.gogrep-*.tmp`. |
 | Samples | Every other regular file in the fixture, recursively. That includes hidden files (`.github/workflows/ci.yml`), `*_test.go`, and `vendor/`, `build/` and `test/` subdirectories. Files directly in the test root or in a namespace directory (such as `go.mod` and `.gitattributes`) are not samples. |
 
@@ -63,15 +63,17 @@ Discovery runs these checks before any rule is loaded. Each broken check fails t
 | Check | Message when it fails |
 |---|---|
 | The fixture lies at least two levels below the test root (`test/<ns>/<fixture>/rule.ref`) | `fixtures live in opengrep/gogrep/rules/test/<namespace>/<fixture>/` |
-| `rule.ref` is a regular file | `rule.ref must be a regular file` |
+| `rule.ref` is a regular file, and so are `expected.txt`, `actual.txt` and `actual.sarif` when present | `<name> must be a regular file` |
 | The fixture is not inside another fixture (both fail) | `fixture is nested inside <path>` / `fixture contains nested fixture <path>` |
 | No other `expected*` or `actual*` files at the fixture root | `unknown regression file <name>; the expected file is expected.txt` |
-| No symlinks or other non-regular files among the samples (git on Windows checks symlinks out as text files, so results would differ by OS) | `symlinks are not supported in fixtures: <path>` |
+| No symlinks or other non-regular files among the samples (git on Windows checks symlinks out as text files, so results would differ by OS). `<path>` is relative to the fixture. | `symlinks are not supported in fixtures: <path>`, or for a socket, pipe or device `special files are not supported in fixtures: <path>` |
 | At least one sample (opengrep run with no targets scans `.`, verified) | `no code samples` |
 | The target arguments total at most 30,000 bytes (Windows' command line limit is 32,767) | `too many sample files (<n>); split the fixture` |
 | `rule.ref` syntax (§3.1) | see §3.1 |
 
-**Orphans.** A directory outside every fixture that contains `expected.txt` or `actual.txt` but no `rule.ref` is reported as its own test and fails at `SETUP` with `expected.txt has no rule.ref next to it`. This catches a lost or renamed reference.
+A fixture reports the first check it fails, in this order. Discovery parses `rule.ref` too, so `Fixture.Ref` holds the reference; resolving it waits for the rules (§6.1).
+
+**Orphans.** A directory outside every fixture that contains `expected.txt` or `actual.txt` but no `rule.ref` is reported as its own test and fails at `SETUP` with `expected.txt has no rule.ref next to it` (`actual.txt has …` when only that is there). This catches a lost or renamed reference.
 
 A missing `expected.txt` is **not** a `SETUP` failure. It fails at `RESULT` with `Cannot find expected.txt.`, followed by the diff against an empty file. `actual.txt` is written, as in CodeQL.
 
@@ -403,7 +405,7 @@ gogrep test accept [path...]
   With no paths, the whole test root is used.
 - **Usage errors (exit 2):**
   - a path outside the test root: `<path> is not under opengrep/gogrep/rules/test`;
-  - a nonexistent path;
+  - a nonexistent path: `<path> does not exist`;
   - a missing test root: `no opengrep/gogrep/rules/test directory here; run gogrep test from the project root`;
   - finding no fixtures: `no tests found under <paths>`. A CI step that silently ran nothing would be a false green.
 - **The display name** of each fixture is its clean slash path relative to the cwd.
@@ -514,9 +516,9 @@ Executing 4 tests.
 
 ### 6.1 Pipeline
 
-1. **Discover.** Parse the arguments (selection flags are already stripped by `gogrepFlags`). Find fixtures under the selected paths, sort them bytewise by slash path, and run the §2.3 checks. Sample lists are slash paths relative to the fixture, sorted bytewise.
+1. **Discover.** Parse the arguments (selection flags are already stripped by `gogrepFlags`). Find fixtures under the selected paths, sort them bytewise by slash path, and run the §2.3 checks, which include parsing `rule.ref`. Sample lists are slash paths relative to the fixture, sorted bytewise.
 2. **Load.** Call `loadEnv()` once. A failure exits 2.
-3. **Resolve, sequentially.** Parse and resolve every `rule.ref` (§3), then apply the selection filter (§5.3). `SETUP` and `RULE` failures found here never start opengrep.
+3. **Resolve, sequentially.** Resolve every parsed `rule.ref` (§3.2), then apply the selection filter (§5.3). `SETUP` and `RULE` failures found here never start opengrep.
 4. **Prepare, sequentially.** Call `opengrepBin()` once, which may extract the bundled binary; an error exits 2. Then call `rules.Write([]*rules.Rule{r})` once for each distinct resolved rule. This produces an absolute, content-addressed, 0o600 config in which `id` is already the qualified id. An error exits 2.
 5. **Run.** A pool of `-j` workers runs one opengrep process per fixture (§6.2) and classifies each result (§6.3).
 6. **Report, sequentially and in sorted order.** Render the table, compare it, write or delete `actual.txt`, `expected.txt` and `actual.sarif` (§6.4), and print each fixture's report. Then print the summary and the untested-rules warning, and exit.
@@ -620,7 +622,7 @@ type Exec func(ctx context.Context, dir string, args []string) (stdout, stderr [
 | File | Contents |
 |---|---|
 | `doc.go` | Package comment. |
-| `discover.go` | `Discover(root string, paths []string) ([]*Fixture, error)`. `Fixture{Name, Dir, Namespace string; Samples []string; Setup error}`. Implements the §2.3 checks, orphans, ignored files and the argument-length guard. |
+| `discover.go` | `Discover(root string, paths []string) ([]*Fixture, error)`. `Fixture{Name, Dir, Namespace, Ref string; Samples []string; Setup error}`. Implements the §2.3 checks, orphans, ignored files, the argument-length guard and the §5.2 path arguments and their usage errors. |
 | `ref.go` | `ParseRef([]byte) (string, error)` (§3.1); `Resolve(ref, namespace string, all []*rules.Rule) (*rules.Rule, error)` (§3.2, including did-you-mean). |
 | `sarif.go` | Typed decode of only `version`, `runs[].tool.driver.rules[].id`, `runs[].invocations[].toolExecutionNotifications[].{level, descriptor.id, message.text}` and `runs[].results[].{ruleId, message.text, locations[0].physicalLocation.{artifactLocation.uri, region.{startLine, startColumn, endLine, endColumn}}}`. |
 | `table.go` | `Render(log *Log, samples []string) ([]byte, error)`: uri normalisation, escaping, sorting, headers and the Windows path rewrite in diagnostics. `Normalize([]byte) []string` for the reader. |
