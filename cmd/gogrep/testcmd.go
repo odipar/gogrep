@@ -4,13 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/odipar/gogrep/internal/engine"
-	"github.com/odipar/gogrep/internal/ruletest"
 )
 
 // testUsage is the help text of gogrep test.
@@ -105,84 +102,65 @@ func (c *cli) runTest(args []string, sel selection) int {
 		io.WriteString(c.stdout, testUsage)
 		return 0
 	}
-	fixtures, err := c.discover(a.paths)
-	if err == nil {
-		if a.accept {
-			return accept(fixtures, c.stdout, c.stderr)
-		}
-		var code int
-		if code, err = c.runFixtures(fixtures, a, sel); err == nil {
-			return code
-		}
+	if a.accept {
+		return c.accept(a.paths)
 	}
-	fmt.Fprintf(c.stderr, "gogrep: %v\n", explain(err))
-	return 2
+	return c.runFixtures(a, sel)
 }
 
-// discover returns the fixtures that paths select in the project in the
-// current directory.
-func (c *cli) discover(paths []string) ([]*ruletest.Fixture, error) {
-	fixtures, err := ruletest.Discover(c.dir, filepath.FromSlash(engine.ProjectTestsDir), paths)
-	if errors.Is(err, ruletest.ErrNoRoot) {
-		return nil, fmt.Errorf("no %s directory here; run gogrep test from the project root", engine.ProjectTestsDir)
-	}
-	return fixtures, err
-}
-
-// runFixtures runs the tests of the fixtures whose rules sel selects and
-// returns the exit code. It returns an error, for exit code 2, when it
-// cannot run them.
-func (c *cli) runFixtures(fixtures []*ruletest.Fixture, a testArgs, sel selection) (int, error) {
+// runFixtures runs the tests that a and sel select, prints the report and
+// returns the exit code.
+func (c *cli) runFixtures(a testArgs, sel selection) int {
+	opts := &engine.TestOptions{Selection: sel.Selection, Paths: a.paths, Jobs: a.threads, Learn: a.learn, KeepSARIF: a.keepSARIF}
 	if sel.empty() {
-		return 0, errNoRules
+		// It selects no rules, where the zero Selection selects every
+		// one: so does a Filter without values.
+		opts.Selection = engine.Selection{Filters: []engine.Filter{{Field: "id"}}}
 	}
-	tests, untested, err := c.eng.PlanTests(c.dir, fixtures, sel.Selection)
-	if err != nil {
-		return 0, err
-	}
-	if len(tests) == 0 {
-		return 0, errors.New("no tests match the selection")
+	report := &testReport{stdout: c.stdout, stderr: c.stderr, showOutput: a.showOutput}
+	opts.Progress = func(_, total int, r *engine.TestResult) {
+		if r == nil {
+			report.total = total
+			report.start()
+			return
+		}
+		report.add(r)
 	}
 
 	// An interrupt stops the opengrep processes, and the tests that
 	// finished are reported.
 	ctx, stop := interruptContext()
 	defer stop()
-	r := &ruletest.Runner{Threads: a.threads, Learn: a.learn, KeepSARIF: a.keepSARIF}
-	if slices.ContainsFunc(tests, func(t *ruletest.Test) bool { return t.Rule != nil }) {
-		// A missing opengrep is an error, rather than a failure of every
-		// test; tests that fail before opengrep runs need none.
-		if r.Bin, r.Exec, err = c.eng.TestExec(ctx); ctx.Err() != nil {
-			fmt.Fprintln(c.stderr, "gogrep: interrupted")
-			return 130, nil
-		} else if err != nil {
-			return 0, err
-		}
-	}
-	report := &testReport{stdout: c.stdout, stderr: c.stderr, total: len(tests), showOutput: a.showOutput}
-	report.start()
-	if _, err := r.Run(ctx, tests, report.add); err != nil {
-		return report.interrupted(), nil
+	rep, err := c.eng.Test(ctx, c.dir, opts)
+	switch {
+	case err != nil && ctx.Err() != nil:
+		return report.interrupted()
+	case err != nil:
+		fmt.Fprintf(c.stderr, "gogrep: %v\n", explain(err))
+		return 2
 	}
 	code := report.finish()
-	if len(a.paths) == 0 {
-		warnUntested(c.stderr, untested)
-	}
-	return code, nil
+	warnUntested(c.stderr, rep.Untested)
+	return code
 }
 
 // accept implements gogrep test accept: it makes the actual.txt of each
-// fixture its expected.txt, prints "Accepted <fixture>" for each, and
-// returns the exit code, 2 when a file could not be renamed.
-func accept(fixtures []*ruletest.Fixture, stdout, stderr io.Writer) int {
+// fixture that paths select its expected.txt, prints "Accepted <fixture>" for
+// each, and returns the exit code, 2 when a file could not be renamed.
+func (c *cli) accept(paths []string) int {
+	accepted, err := c.eng.AcceptTests(c.dir, paths)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "gogrep: %v\n", explain(err))
+		return 2
+	}
 	code := 0
-	for _, a := range ruletest.Accept(fixtures) {
+	for _, a := range accepted {
 		if a.Err != nil {
-			fmt.Fprintf(stderr, "gogrep: accepting %s/actual.txt: %v\n", a.Name, a.Err)
+			fmt.Fprintf(c.stderr, "gogrep: accepting %s/actual.txt: %v\n", a.Name, a.Err)
 			code = 2
 			continue
 		}
-		fmt.Fprintf(stdout, "Accepted %s\n", a.Name)
+		fmt.Fprintf(c.stdout, "Accepted %s\n", a.Name)
 	}
 	return code
 }

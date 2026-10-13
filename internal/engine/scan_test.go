@@ -283,7 +283,7 @@ func TestScanConcurrently(t *testing.T) {
 	wg.Wait()
 }
 
-// Scan, Command and Cmd.Run leave the process as they found it: its signal
+// Scan, Command, Cmd.Run and Test leave the process as they found it: its signal
 // dispositions, which its later children inherit, its working directory and
 // its environment.
 func TestNoProcessState(t *testing.T) {
@@ -322,6 +322,11 @@ func TestNoProcessState(t *testing.T) {
 		if err := cmd.Run(); err != nil {
 			t.Fatal(err)
 		}
+	}
+	project := t.TempDir()
+	writeTree(t, project, fixtures)
+	if _, err := e.Test(ctx, project, nil); err != nil {
+		t.Fatal(err)
 	}
 
 	if got := ignored(); got != sigs {

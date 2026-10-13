@@ -223,3 +223,30 @@ func TestScanOpengrepConcurrently(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// The fixtures of testdata/project pass.
+func TestTestOpengrep(t *testing.T) {
+	e := requireOpengrep(t)
+	t.Parallel()
+	info, err := e.Opengrep(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := copyProject(t, nil)
+	before := treeState(t, dir)
+	rep, err := e.Test(context.Background(), dir, &TestOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Results) == 0 || rep.Passed != len(rep.Results) || rep.Failed != nil || rep.Untested != nil {
+		t.Errorf("Test = %d results, %d passed, failed %q, untested %q; want every test passed", len(rep.Results), rep.Passed, rep.Failed, rep.Untested)
+	}
+	for _, r := range rep.Results {
+		if r.Stage != "" || !strings.HasPrefix(r.RuleID, "project.") || len(r.Command) == 0 || r.Command[0] != info.Path || r.Dir != filepath.Join(dir, filepath.FromSlash(r.Name)) {
+			t.Errorf("result %+v; want a passed test of a project rule, run in its fixture", r)
+		}
+	}
+	if treeState(t, dir) != before {
+		t.Errorf("a ReadOnly Test changed the project")
+	}
+}

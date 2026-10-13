@@ -74,7 +74,8 @@ func gogrepFlags(args []string) (rest []string, sel selection, err error) {
 var errNoRules = errors.New("the --suite/--rule/--gogrep-* selection matches no rules")
 
 // explain words the engine's selection errors as gogrep does: in terms of
-// its flags, and saying how to list what they take.
+// its flags, and saying how to list what they take; and a missing test root
+// in terms of the current directory.
 func explain(err error) error {
 	var se *engine.SelectionError
 	switch {
@@ -87,6 +88,8 @@ func explain(err error) error {
 		return fmt.Errorf("%w; list them with: gogrep suites", err)
 	case errors.Is(err, engine.ErrNoRules):
 		return errNoRules
+	case errors.Is(err, engine.ErrNoTestRoot):
+		return fmt.Errorf("no %s directory here; run gogrep test from the project root", engine.ProjectTestsDir)
 	}
 	return err
 }

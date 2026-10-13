@@ -27,6 +27,10 @@ var (
 	// the valid SARIF 2.1.0 log of one run asked of it, as when its
 	// processes are killed behind its launcher's back.
 	ErrNoSARIF = errors.New("opengrep exited 0 but wrote no SARIF")
+
+	// ErrNoTestRoot is wrapped by Test and AcceptTests when the project has
+	// no ProjectTestsDir.
+	ErrNoTestRoot = errors.New("no rule test directory")
 )
 
 // A SelectionError reports a Selection entry that is malformed, names an

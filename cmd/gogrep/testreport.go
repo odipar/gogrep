@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/odipar/gogrep/internal/ruletest"
+	"github.com/odipar/gogrep/internal/engine"
 )
 
 // A testReport prints the report of gogrep test: how many tests run, then
@@ -32,7 +32,7 @@ func (p *testReport) start() {
 // written or removed on stderr, then a status line, then the diff of a test
 // whose results differ from expected.txt, or why it failed, indented, and
 // with showOutput the opengrep command line and stderr.
-func (p *testReport) add(v *ruletest.Verdict) {
+func (p *testReport) add(v *engine.TestResult) {
 	p.reported++
 	for _, err := range v.FileErrors {
 		fmt.Fprintf(p.stderr, "gogrep: %v\n", err)
@@ -46,7 +46,7 @@ func (p *testReport) add(v *ruletest.Verdict) {
 		status = "FAILED(" + string(v.Stage) + ")"
 	}
 	fmt.Fprintf(p.stdout, "[%d/%d] %s %s\n", p.reported, p.total, status, v.Name)
-	if v.Missing && !v.Learned {
+	if v.MissingExpected && !v.Learned {
 		fmt.Fprintln(p.stdout, "Cannot find expected.txt.")
 	}
 	io.WriteString(p.stdout, v.Diff)
