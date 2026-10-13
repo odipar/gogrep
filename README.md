@@ -442,8 +442,9 @@ pass through. That annotation-based runner is still available as
     pinned to a git commit in [opengrep.json](opengrep.json).
   - `gogrep`: rules in this repository's [rules/](rules/README.md).
   - `project`: rules in `opengrep/gogrep/rules/` of the scanned project,
-    except `test/`, which holds [rule test fixtures](#5-test-custom-rules), is
-    never loaded as rules, and is excluded from gogrep's scans.
+    except `test/` (in any letter case), which holds
+    [rule test fixtures](#5-test-custom-rules), is never loaded as rules,
+    and is excluded from gogrep's scans.
 - **Rule ids** are stable (`<rule set>.<directory>.<rule id>`), so results
   keep their identity across machines and rule updates.
 - **`gogrep opengrep <args>`** runs the wrapped opengrep with `<args>`

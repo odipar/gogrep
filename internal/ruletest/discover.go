@@ -41,11 +41,19 @@ type Fixture struct {
 // fixture that has an expected.txt or actual.txt is returned as a fixture
 // that fails at SETUP, and so are a symlink outside every fixture, which
 // would hide the fixtures it leads to, and a fixture that breaks a rule of
-// the design's §2.3. It is an error when root is not a directory, when a
-// path does not exist, lies outside root or selects no test, or when there
-// are no tests at all.
+// the design's §2.3. It is an error when root is not a directory or is
+// spelled in another letter case, when a path does not exist, lies outside
+// root or selects no test, or when there are no tests at all.
 func Discover(root string, paths []string) ([]*Fixture, error) {
 	t := &tree{root: root, name: path.Clean(filepath.ToSlash(root)), entries: map[string]fs.DirEntry{}}
+	// A case-insensitive file system would find a Test directory here,
+	// which scans then do not exclude, as other file systems do not.
+	siblings, _ := os.ReadDir(filepath.Dir(root))
+	for _, e := range siblings {
+		if base := filepath.Base(root); e.Name() != base && strings.EqualFold(e.Name(), base) {
+			return nil, fmt.Errorf("%s must be spelled %s", path.Join(path.Dir(t.name), e.Name()), t.name)
+		}
+	}
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
 		return nil, fmt.Errorf("no %s directory here; run gogrep test from the project root", t.name)
 	}

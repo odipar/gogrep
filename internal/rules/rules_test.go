@@ -37,13 +37,15 @@ func TestFromFSSkipDirs(t *testing.T) {
 		"test/go/exec/rule.ref":    {Data: []byte("a\n")},
 		"test/go/exec/sample.yaml": {Data: []byte("rules: [\n")},
 		"test/go/exec/sub/x.go":    {Data: []byte("package sub\n")},
+		"Test/x/y.yaml":            {Data: []byte("rules: [\n")},
+		"TEST/z.yaml":              {Data: rule("z")},
 	}
 	without := func(skipped ...string) []string {
 		return slices.DeleteFunc(slices.Sorted(maps.Keys(fsys)), func(p string) bool {
 			return slices.Contains(skipped, p)
 		})
 	}
-	withoutTest := without("test/go/exec/rule.ref", "test/go/exec/sample.yaml", "test/go/exec/sub/x.go")
+	withoutTest := without("test/go/exec/rule.ref", "test/go/exec/sample.yaml", "test/go/exec/sub/x.go", "Test/x/y.yaml", "TEST/z.yaml")
 
 	tests := []struct {
 		name     string

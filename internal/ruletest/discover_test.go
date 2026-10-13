@@ -319,6 +319,15 @@ func TestDiscoverRoot(t *testing.T) {
 	if _, err := Discover(testRoot, nil); errText(err) != "no opengrep/gogrep/rules/test directory here; run gogrep test from the project root" {
 		t.Errorf("Discover without a test root: %q", errText(err))
 	}
+	// Whether or not the file system ignores case.
+	upper := filepath.Join(filepath.Dir(testRoot), "Test")
+	writeTree(t, upper, map[string]string{"go/x/rule.ref": "x\n", "go/x/a.go": "package a\n"})
+	if _, err := Discover(testRoot, nil); errText(err) != "opengrep/gogrep/rules/Test must be spelled opengrep/gogrep/rules/test" {
+		t.Errorf("Discover with a Test directory: %q", errText(err))
+	}
+	if err := os.RemoveAll(upper); err != nil {
+		t.Fatal(err)
+	}
 	writeTree(t, testRoot, map[string]string{"go.mod": "module fixtures\n", "go/x/a.go": "package a\n"})
 	if _, err := Discover(testRoot, nil); errText(err) != "no tests found under opengrep/gogrep/rules/test" {
 		t.Errorf("Discover without fixtures: %q", errText(err))
