@@ -10,9 +10,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/odipar/gogrep/internal/rules"
@@ -167,7 +167,12 @@ func runFixtures(fixtures []*ruletest.Fixture, a testArgs, sel selection, stdout
 
 	// A scan leaves Ctrl-C to its one opengrep process; gogrep test catches
 	// it, stops its opengrep processes and reports the tests that finished.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// A signal gogrep was started with ignored, as nohup does SIGHUP, stays
+	// ignored; given no signals at all, NotifyContext would catch every one.
+	ctx, stop := context.Background(), context.CancelFunc(func() {})
+	if sigs := slices.DeleteFunc(slices.Clone(interrupts), signal.Ignored); len(sigs) > 0 {
+		ctx, stop = signal.NotifyContext(ctx, sigs...)
+	}
 	defer stop()
 	code := r.Run(ctx, tests, stdout, stderr)
 	if code != 130 && len(a.paths) == 0 && !active {

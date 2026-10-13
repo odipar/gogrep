@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestMain lets the test binary stand in for opengrep: run as $OPENGREP_BIN
@@ -23,8 +24,13 @@ func TestMain(m *testing.M) {
 
 // fakeOpengrep prints its args to stdout, one per line, or with --sarif a
 // SARIF log from tool "opengrep" that holds them as properties.args. It
-// writes "fake stderr" to stderr and exits with $GOGREP_TEST_FAKE_EXIT.
+// writes "fake stderr" to stderr and exits with $GOGREP_TEST_FAKE_EXIT. With
+// $GOGREP_TEST_FAKE_WAIT set, it first creates that file and waits a minute.
 func fakeOpengrep(args []string) int {
+	if p := os.Getenv("GOGREP_TEST_FAKE_WAIT"); p != "" {
+		os.WriteFile(p, nil, 0o600)
+		time.Sleep(time.Minute)
+	}
 	if slices.Contains(args, "--sarif") {
 		json.NewEncoder(os.Stdout).Encode(map[string]any{
 			"version": "2.1.0",

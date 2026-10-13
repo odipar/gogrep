@@ -516,7 +516,7 @@ Executing 4 tests.
 | 0 | Every selected test passed or was learned, or `accept` finished. |
 | 1 | At least one test failed, at any stage. |
 | 2 | gogrep could not run the tests: a usage error, no tests found or selected, a missing test root, rule sets that fail to load, the opengrep binary not found, or an I/O error writing `actual.txt`, `expected.txt` or `actual.sarif` (the remaining tests still run and report). This follows gogrep's existing convention that a `gogrep: …` error exits 2. A missing binary is 2 here, although `scan` returns 1, because for `test` the code 1 must mean only "a test failed". |
-| 130 | Interrupted by SIGINT or SIGTERM (§6.5). |
+| 130 | Interrupted by SIGINT or SIGTERM, or on Unix by SIGHUP or SIGQUIT (§6.5). |
 
 ## 6. Execution
 
@@ -596,10 +596,11 @@ In descriptions, each line of stderr is prefixed with `> `, blank lines at the s
 
 - **Workers.** `-j` workers take fixtures in sorted order. Each worker runs `exec.CommandContext` with a short `WaitDelay`.
 - **The first run runs alone.** On its first run, opengrep 1.30.2 unpacks its Python runtime (about 245 MB) into `~/.cache/opengrep/v1.30.2/`, and a run that starts meanwhile can crash with SIGBUS. With an empty cache, two of four parallel runs died this way (exit 138), while eight parallel runs with the cache in place all succeeded (verified). CI runners start with an empty cache, so the first fixture's run ends before any other starts. This costs one run's time when the cache is already there.
-- **Interrupts.** `gogrep scan` ignores SIGINT and SIGTERM so that its single child gets Ctrl-C. `gogrep test` instead **catches** them with `signal.Notify(os.Interrupt, syscall.SIGTERM)`. When a signal arrives:
-  - gogrep cancels the context, so no new run starts and every running opengrep is killed together with the processes it started. opengrep's launcher passes no kill on to `opengrep-cli` and `opengrep-core`, which would otherwise scan on at full CPU after gogrep exits (verified). On Unix each opengrep leads a process group of its own (`Setpgid`) and cancelling sends SIGKILL to the group, so Ctrl-C from the terminal reaches only gogrep, which then kills the group. On Windows cancelling runs `taskkill /T /F /PID <pid>`, and kills the launcher alone if that fails. After SIGINT or SIGTERM, to gogrep alone or to its whole process group, no `opengrep-cli` or `opengrep-core` was left on macOS (verified);
+- **Interrupts.** `gogrep scan` ignores SIGINT and SIGTERM so that its single child gets Ctrl-C. `gogrep test` instead **catches** them with `signal.NotifyContext`, and on Unix also SIGHUP (a closed terminal or a dropped ssh session) and SIGQUIT (`Ctrl-\`). A signal that gogrep was started with ignored, such as SIGHUP under `nohup`, stays ignored. When a signal arrives:
+  - gogrep cancels the context, so no new run starts and every running opengrep is killed together with the processes it started. opengrep's launcher passes no kill on to `opengrep-cli` and `opengrep-core`, which would otherwise scan on at full CPU after gogrep exits (verified). On Unix each opengrep leads a process group of its own (`Setpgid`) and cancelling sends SIGKILL to the group. The signals a terminal sends to its foreground group (Ctrl-C, `Ctrl-\`, a hangup) therefore reach only gogrep, which is why gogrep catches all three and kills the groups itself. On Windows cancelling runs `taskkill /T /F /PID <pid>`, and kills the launcher alone if that fails. After SIGINT, SIGTERM, SIGHUP or SIGQUIT, to gogrep alone or to its whole process group, no `opengrep-cli` or `opengrep-core` was left on macOS (verified);
   - results of interrupted runs are discarded, and no files are written for them;
-  - the reporter prints the fixtures that completed, in order, up to the first incomplete one, then `gogrep: interrupted` on stderr, and exits **130**.
+  - the reporter prints the fixtures that completed, in order, up to the first incomplete one, then `gogrep: interrupted` on stderr, and exits **130**, whichever the signal.
+- **Signals that do not reach opengrep.** SIGKILL cannot be caught, and gogrep does not catch Ctrl-Z (SIGTSTP); neither reaches the opengrep process groups. After SIGKILL to gogrep or to its process group (for example from `timeout -s KILL`), running `opengrep-cli` and `opengrep-core` processes scan on until they finish. After Ctrl-Z only gogrep stops: running scans go on, and no new run starts until gogrep continues (verified). A typical fixture's scan takes about a second.
 - **Speed.** Each run costs about 1.2 s, of which 0.8 s is opengrep's startup. Ten fixtures take about 3.1 s with 8 workers on an M2, against 12.3 s sequentially (measured). Running the first run alone adds about one run: on a busier M2, the runner took 4.2 s with 8 workers against 3.2 s without that wait, and 18.0 s sequentially (measured).
 
 ### 6.6 Cache files and network
@@ -642,7 +643,7 @@ type Exec func(ctx context.Context, dir string, args []string) (stdout, stderr [
 | `table.go` | `Render(log *Log, samples []string) ([]byte, error)`: uri normalisation, escaping, sorting, headers and the Windows path rewrite in diagnostics. `Normalize([]byte) []string` for the reader. |
 | `diff.go` | Myers line diff and unified output (§4.6). |
 | `classify.go` | Rows 1 to 4 of the §6.3 decision table: `Classify(out Output, ruleID string, samples []string) (table []byte, stage Stage, desc []string)`, where `Output{Stdout, Stderr []byte; Code int; Err error}` is one run. Row 1 needs the raw stdout and `Render`'s errors, so it takes the output rather than a decoded log, and returns the table that row 5 compares. |
-| `run.go` | `Test{*Fixture; Rule *rules.Rule; Err error; Config string}`, and `Plan(fixtures, all, keep func(*rules.Rule) bool) []*Test`, which resolves each reference and applies the selection. `Runner{Bin string; Exec Exec; Threads int; Learn, KeepSARIF, ShowOutput bool}` and `(*Runner).Run(ctx, tests, stdout, stderr) int`: the worker pool, interrupt handling (the caller cancels `ctx` on SIGINT or SIGTERM) and the ordered handoff to the reporter. |
+| `run.go` | `Test{*Fixture; Rule *rules.Rule; Err error; Config string}`, and `Plan(fixtures, all, keep func(*rules.Rule) bool) []*Test`, which resolves each reference and applies the selection. `Runner{Bin string; Exec Exec; Threads int; Learn, KeepSARIF, ShowOutput bool}` and `(*Runner).Run(ctx, tests, stdout, stderr) int`: the worker pool, interrupt handling (the caller cancels `ctx` on an interrupt, §6.5) and the ordered handoff to the reporter. |
 | `files.go` | Atomic 0o600 writes, stale-file deletion, and `Accept(fixtures, stdout, stderr) int`. |
 | `report.go` | Comparing with `expected.txt`, status lines, descriptions, the summary, computing the exit code, and `WarnUntested(w, project, tests)`, which the caller calls after a full run. |
 
@@ -688,7 +689,7 @@ There are no `_test.go` files today. All new tests use the standard `testing` pa
   - `accept` skipping silently;
   - written files being 0o600 (skipped on Windows);
   - interrupts: no writes and exit 130.
-- **package main:** cancelling a run kills a process that opengrep's stand-in started (Unix); routing of `test` and `opengrep` (the pass-through keeps `--rule`); test flag parsing (`-j 0`, `-j -2`, `--threads=3`, flags after paths, unknown flag → 2); `withRules` appending `--exclude`; `selection.filter`.
+- **package main:** cancelling a run kills a process that opengrep's stand-in started (Unix); SIGHUP and SIGQUIT interrupt `gogrep test` (Unix); routing of `test` and `opengrep` (the pass-through keeps `--rule`); test flag parsing (`-j 0`, `-j -2`, `--threads=3`, flags after paths, unknown flag → 2); `withRules` appending `--exclude`; `selection.filter`.
 
 **Integration tests** (`testcmd_test.go`). They are skipped under `-short`, when `opengrepBin()` fails, or when `opengrep --version` is not the version `opengrep.json` pins (the golden files hold that version's output, so another opengrep on `$PATH` in an unbundled build skips rather than fails). They run in CI with `-tags bundled`.
 
