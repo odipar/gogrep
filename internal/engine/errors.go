@@ -6,6 +6,13 @@ import (
 )
 
 var (
+	// ErrNoOpengrep is wrapped by every error that leaves an Engine without
+	// an opengrep to run: none was found, the one configured is not a
+	// regular file, it could not be extracted, or it could not be started.
+	// InstallOpengrep fixes the first case. For Config.Opengrep the error's
+	// text is exec.LookPath's or os.Stat's, unchanged ("exec: …").
+	ErrNoOpengrep = errors.New("no usable opengrep")
+
 	// ErrNoRules reports a selection that picks no rules. A
 	// *SelectionError wraps it for a Rules entry that matches no rule.
 	ErrNoRules = errors.New("the selection matches no rules")
@@ -39,3 +46,25 @@ func (e *SelectionError) Error() string {
 }
 
 func (e *SelectionError) Unwrap() error { return e.Err }
+
+// An IntegrityError reports an opengrep executable whose SHA-256 is not the
+// pinned one where gogrep requires it to be: Config.EmbeddedOpengrep, a
+// downloaded asset, or InstallOptions.From. A cached executable that fails
+// verification is treated as absent, never run, and replaced by the next
+// InstallOpengrep.
+type IntegrityError struct {
+	Path string // the file or URL concerned; "embedded" for Config.EmbeddedOpengrep
+	Want string // the pinned SHA-256, hex
+	Got  string // the SHA-256 of the bytes, hex
+}
+
+func (e *IntegrityError) Error() string {
+	return fmt.Sprintf("%s: SHA-256 %s, want the pinned %s", e.Path, e.Got, e.Want)
+}
+
+// noOpengrep is an error, worded as err, that leaves an Engine without an
+// opengrep to run.
+type noOpengrep struct{ err error }
+
+func (e *noOpengrep) Error() string   { return e.err.Error() }
+func (e *noOpengrep) Unwrap() []error { return []error{ErrNoOpengrep, e.err} }

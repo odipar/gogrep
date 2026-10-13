@@ -149,17 +149,20 @@ func (c *cli) runFixtures(fixtures []*ruletest.Fixture, a testArgs, sel selectio
 		return 0, errors.New("no tests match the selection")
 	}
 
-	r := &ruletest.Runner{Exec: execFixture, Threads: a.threads, Learn: a.learn, KeepSARIF: a.keepSARIF}
-	if slices.ContainsFunc(tests, func(t *ruletest.Test) bool { return t.Rule != nil }) {
-		if r.Bin, err = c.testBin(); err != nil {
-			return 0, err
-		}
-	}
-
 	// An interrupt stops the opengrep processes, and the tests that
 	// finished are reported.
 	ctx, stop := interruptContext()
 	defer stop()
+	r := &ruletest.Runner{Exec: execFixture, Threads: a.threads, Learn: a.learn, KeepSARIF: a.keepSARIF}
+	if slices.ContainsFunc(tests, func(t *ruletest.Test) bool { return t.Rule != nil }) {
+		// A missing opengrep is an error, rather than a failure of every
+		// test; tests that fail before opengrep runs need none.
+		info, err := c.eng.Opengrep(ctx)
+		if err != nil {
+			return 0, err
+		}
+		r.Bin = info.Path
+	}
 	report := &testReport{stdout: c.stdout, stderr: c.stderr, total: len(tests), showOutput: a.showOutput}
 	report.start()
 	if _, err := r.Run(ctx, tests, report.add); err != nil {
@@ -186,27 +189,6 @@ func accept(fixtures []*ruletest.Fixture, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Accepted %s\n", a.Name)
 	}
 	return code
-}
-
-// testBin returns the opengrep binary that gogrep test runs, as an absolute
-// path: each opengrep process runs in its fixture's directory, where a
-// relative $OPENGREP_BIN would name another file. A binary that is missing
-// is an error, for exit code 2, rather than a failure of every test.
-func (c *cli) testBin() (string, error) {
-	bin, err := c.opengrepBin()
-	if err == nil {
-		bin, err = exec.LookPath(bin)
-	}
-	if err == nil {
-		bin, err = filepath.Abs(bin)
-	}
-	if err != nil {
-		return "", err
-	}
-	if fi, err := os.Stat(bin); err != nil || !fi.Mode().IsRegular() {
-		return "", fmt.Errorf("opengrep binary %s is not a regular file", bin)
-	}
-	return bin, nil
 }
 
 // execFixture runs opengrep for one fixture, as ruletest.Exec describes, in

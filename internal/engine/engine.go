@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/odipar/gogrep/internal/opengrep"
+	"github.com/odipar/gogrep/internal/pin"
 	"github.com/odipar/gogrep/internal/rules"
 	"github.com/odipar/gogrep/internal/rulesets"
 	"github.com/odipar/gogrep/internal/suite"
@@ -42,10 +44,33 @@ type Files struct {
 	Pins   []byte // opengrep.json
 }
 
-// A Config configures an Engine. The zero Config is ready to use: files go
-// under the user cache directory, opengrep gets the process environment, and
+// A Config configures an Engine. The zero Config is ready to use: opengrep is
+// the pinned build from the cache (or a verified one on PATH), files go under
+// the user cache directory, opengrep gets the process environment, and
 // nothing is logged. Fields added later will default to the old behaviour.
 type Config struct {
+	// Opengrep is the opengrep executable to run: an absolute path, or a
+	// name without a path separator that is looked up in the process's
+	// PATH when first needed. It is used whatever its version;
+	// OpengrepInfo.Pinned reports whether it is the pinned build. New
+	// rejects a relative path that contains a separator. Empty means: find
+	// opengrep as Engine.Opengrep describes. The package never reads
+	// $OPENGREP_BIN; the gogrep command passes it here.
+	Opengrep string
+
+	// EmbeddedOpengrep is an opengrep executable compiled into the program,
+	// for example with go:embed. Its SHA-256 must be the pinned one for the
+	// running GOOS/GOARCH (glibc or musl on Linux); otherwise Opengrep
+	// returns an *IntegrityError. It is written once to CacheDir. gogrep's
+	// release builds set it.
+	EmbeddedOpengrep []byte
+
+	// AllowUnpinned lets the engine run an opengrep found on PATH whose
+	// SHA-256 is not the pinned one. Findings then depend on that
+	// opengrep's version. The gogrep command sets it, as it has always run
+	// any opengrep on PATH.
+	AllowUnpinned bool
+
 	// CacheDir is where gogrep keeps the opengrep executable, opengrep's
 	// unpacked runtime, rule selections, locks and per-run logs. It must be
 	// absolute. Empty means filepath.Join(os.UserCacheDir(), "gogrep"),
@@ -73,21 +98,27 @@ type Config struct {
 // standard streams, and none reads environment variables beyond the
 // defaults Config documents. Every directory argument must be absolute.
 type Engine struct {
+	cfg      Config
 	cacheDir string
 	cacheErr error // why there is no cacheDir
 	env      []string
 	log      *slog.Logger
 	files    Files
 
-	ownRules func() ([]*rules.Rule, error) // the "gogrep" rule set, parsed once
+	ownRules    func() ([]*rules.Rule, error) // the "gogrep" rule set, parsed once
+	pins        func() (*pin.Pins, error)     // files.Pins, parsed once
+	embeddedSum func() string                 // the SHA-256 of cfg.EmbeddedOpengrep, computed once
 }
 
 // New returns an Engine for cfg and files. It runs nothing and reads no
-// file: gogrep's built-in rule sets are parsed (about 0.13 s, once per
-// process) when first needed. It returns an error only for an invalid cfg,
-// such as a relative CacheDir.
+// file: opengrep is found, and gogrep's built-in rule sets are parsed (about
+// 0.13 s, once per process), when first needed. It returns an error only for
+// an invalid cfg, such as a relative CacheDir or a relative Opengrep path.
 func New(cfg Config, files Files) (*Engine, error) {
-	e := &Engine{cacheDir: cfg.CacheDir, env: slices.Clone(cfg.Env), log: cfg.Logger, files: files}
+	if p := cfg.Opengrep; p != "" && !filepath.IsAbs(p) && (strings.ContainsAny(p, "/"+string(filepath.Separator)) || filepath.VolumeName(p) != "") {
+		return nil, fmt.Errorf("Config.Opengrep %s is a relative path", p)
+	}
+	e := &Engine{cfg: cfg, cacheDir: cfg.CacheDir, env: slices.Clone(cfg.Env), log: cfg.Logger, files: files}
 	switch {
 	case e.cacheDir == "":
 		cache, err := os.UserCacheDir()
@@ -113,6 +144,14 @@ func New(cfg Config, files Files) (*Engine, error) {
 		parsed, err := parse(map[string]rules.Set{"gogrep": set})
 		return parsed["gogrep"], err
 	})
+	e.pins = sync.OnceValues(func() (*pin.Pins, error) {
+		p, err := pin.Parse(files.Pins)
+		if err != nil {
+			return nil, fmt.Errorf("opengrep.json: %w", err)
+		}
+		return p, nil
+	})
+	e.embeddedSum = sync.OnceValue(func() string { return opengrep.SHA256(cfg.EmbeddedOpengrep) })
 	return e, nil
 }
 
