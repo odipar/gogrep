@@ -646,7 +646,7 @@ type Exec func(ctx context.Context, dir string, args []string) (stdout, stderr [
 | `files.go` | Atomic 0o600 writes, stale-file deletion, and `Accept(fixtures, stdout, stderr) int`. |
 | `report.go` | Comparing with `expected.txt`, status lines, descriptions, the summary, computing the exit code, and `WarnUntested(w, project, tests)`, which the caller calls after a full run. |
 
-**`testcmd.go` (package main).** `runTest` handles `run`/`accept` dispatch, flag parsing, usage text, `loadEnv`, `selection.filter`, `rules.Write`, `opengrepBin`, and wiring `Exec` to `exec.CommandContext` with `utf8Env`. `procgroup_unix.go` and `procgroup_windows.go` make cancelling a run kill opengrep's whole process tree (§6.5).
+**`testcmd.go` (package main).** `runTest` handles `run`/`accept` dispatch, flag parsing, usage text, `loadEnv`, `selection.filter`, `rules.Write`, `opengrepBin`, and wiring `Exec` to `exec.CommandContext` with `utf8Env`. `procgroup_unix.go` and `procgroup_windows.go` make cancelling a run kill opengrep's whole process tree (§6.5); `procgroup_other.go` kills the launcher alone, so that gogrep still builds for systems opengrep does not ship for.
 
 ### 7.3 Tests for gogrep itself
 
