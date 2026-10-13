@@ -18,10 +18,7 @@ const lockPoll = 100 * time.Millisecond
 // nothing: a lock only avoids duplicate work.
 func lock(ctx context.Context, path string) (unlock func(), err error) {
 	nothing := func() {}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nothing, err
-	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	f, err := openLock(path)
 	if err != nil {
 		return nothing, err
 	}
@@ -46,4 +43,13 @@ func lock(ctx context.Context, path string) (unlock func(), err error) {
 			return nothing, ctx.Err()
 		}
 	}
+}
+
+// openLock opens the lock file path, which it creates 0o600 in a directory
+// created 0o700.
+func openLock(path string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 }

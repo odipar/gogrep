@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -308,6 +309,46 @@ func TestRunFirstAlone(t *testing.T) {
 		}
 		checkPrepared(t, dir, sum, strings.TrimSuffix(string(outs[0]), " <nil>\n"))
 	})
+}
+
+// RemoveRuntime keeps a runtime that is being prepared, and leaves nothing
+// of one it removes.
+func TestRemoveRuntime(t *testing.T) {
+	t.Parallel()
+	exe, sum, env, _ := unpacker(t)
+	dir := t.TempDir()
+	if _, err := PrepareRuntime(context.Background(), exe, sum, dir, env, slog.New(slog.DiscardHandler)); err != nil {
+		t.Fatal(err)
+	}
+	name := "runtime-" + sum[:16]
+	if runtime.GOOS == "windows" {
+		name += ".ready"
+	}
+	stale := func(fs.FileInfo) bool { return true }
+	if removed, err := RemoveRuntime(dir, name, func(fs.FileInfo) bool { return false }); removed || err != nil {
+		t.Errorf("RemoveRuntime of a runtime that is not stale = %v, %v; want it kept", removed, err)
+	}
+	unlock, err := lock(context.Background(), filepath.Join(dir, "locks", "runtime-"+sum[:16]+".lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := RemoveRuntime(dir, name, stale)
+	unlock()
+	if removed || err != nil {
+		t.Errorf("RemoveRuntime while the runtime is being prepared = %v, %v; want it kept", removed, err)
+	}
+	if removed, err := RemoveRuntime(dir, name, stale); !removed || err != nil {
+		t.Errorf("RemoveRuntime = %v, %v; want it removed", removed, err)
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if e.Name() != "locks" && e.Name() != "logs" { // logs on Windows
+			t.Errorf("RemoveRuntime left %s", e.Name())
+		}
+	}
+	if removed, err := RemoveRuntime(dir, name, stale); removed || err != nil {
+		t.Errorf("RemoveRuntime of a removed runtime = %v, %v; want nothing to do", removed, err)
+	}
 }
 
 func TestLock(t *testing.T) {

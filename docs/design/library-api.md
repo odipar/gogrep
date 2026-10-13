@@ -552,7 +552,8 @@ func (e *Engine) InstallOpengrep(ctx context.Context, opts *InstallOptions) (*Op
 // PruneOptions configure Engine.PruneCache; nil means the zero PruneOptions.
 type PruneOptions struct {
 	// MaxAge is how long an entry that no run has used is kept. Zero means
-	// 30 days.
+	// 30 days. Executables and runtimes are kept for at least two days,
+	// whatever MaxAge says, as a run marks them at most once a day.
 	MaxAge time.Duration
 }
 
@@ -561,9 +562,11 @@ type PruneOptions struct {
 // than this version's pins. It also removes temporaries and per-run logs
 // left by crashed runs once they are a day old. The current pins'
 // executables and runtimes are kept. A run marks what it uses before
-// starting opengrep, at most once a day per process. PruneCache never runs
-// by itself, and it touches nothing outside CacheDir, opengrep's default
-// runtime directory included.
+// starting opengrep, at most once a day per process for an executable and
+// its runtime, and every time for a selection. A runtime that is being
+// prepared is kept, and one that is removed disappears at once for runs
+// that start meanwhile. PruneCache never runs by itself, and it touches
+// nothing outside CacheDir, opengrep's default runtime directory included.
 func (e *Engine) PruneCache(opts *PruneOptions) error
 
 // ================================================================= selection
@@ -1350,8 +1353,8 @@ Locks are polled every 100 ms, so ctx can cancel the wait. The OS releases them 
 | Path under `CacheDir` | Mode | Written by | Removed |
 |---|---|---|---|
 | `.` | 0o700 | everything below | — |
-| `opengrep-<sha16>/opengrep[.exe]` | directory and file 0o700 | extraction, `InstallOpengrep` | `PruneCache`, if not a current pin and unused for `MaxAge` |
-| `runtime-<sha16>/opengrep/<version>/` (Linux, macOS) | directory 0o700; opengrep's own modes inside | runtime preparation | same rule |
+| `opengrep-<sha16>/opengrep[.exe]` | directory and file 0o700 | extraction, `InstallOpengrep` | `PruneCache`, if not a current pin and unused for `MaxAge`, and for at least two days: a process marks what it runs at most once a day, so a shorter `MaxAge` would remove what a long-running host still runs |
+| `runtime-<sha16>/opengrep/<version>/` (Linux, macOS) | directory 0o700; opengrep's own modes inside | runtime preparation | same rule, under the runtime's lock (kept while it is held), renamed into a `.runtime-*` before it is removed, so that a starting run finds it complete or absent and never repairs a half-removed one in place |
 | `runtime-<sha16>.ready` (Windows) | 0o600 | runtime preparation | same rule |
 | `selections/<sha16>.yaml` | 0o600 | `rules.Write`, content-addressed (unchanged, so printed `--show-opengrep-output` lines can still be rerun); modification time refreshed on reuse | `PruneCache`, after `MaxAge` unused |
 | `logs/opengrep-*.log` | 0o600, created before opengrep opens it | `Scan`, `Test`, runtime preparation (`SEMGREP_LOG_FILE`) | when that opengrep process ends; `PruneCache` after a day |

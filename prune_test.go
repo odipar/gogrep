@@ -59,6 +59,7 @@ func cacheEntries(t *testing.T, dir string) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	slices.Sort(got)
 	return got
 }
 
@@ -67,6 +68,7 @@ func TestPruneCache(t *testing.T) {
 	pin := opengrep.SHA256(fakeOpengrep)[:16]
 	const (
 		month = 31 * 24 * time.Hour
+		week  = 7 * 24 * time.Hour
 		days  = 2 * 24 * time.Hour
 		hour  = time.Hour
 	)
@@ -78,16 +80,20 @@ func TestPruneCache(t *testing.T) {
 		"opengrep-" + pin + "/.opengrep-2":              hour,
 		"opengrep-0123456789abcdef/":                    month, // another build's, unused: removed
 		"opengrep-0123456789abcdef/opengrep":            month,
-		"opengrep-fedcba9876543210/":                    hour,
+		"opengrep-fedcba9876543210/":                    week,
 		"opengrep-fedcba9876543210/opengrep":            month,
 		"opengrep-fedcba9876543210/.download-3":         days,
+		"opengrep-1111111111111111/":                    hour, // marked a day ago or less: in use
+		"opengrep-1111111111111111/opengrep":            month,
 		"runtime-" + pin + "/":                          month,
 		"runtime-0123456789abcdef/":                     month,
 		"runtime-0123456789abcdef/opengrep/":            month,
 		"runtime-0123456789abcdef/opengrep/v1.29.0/":    month,
 		"runtime-0123456789abcdef/opengrep/v1.29.0/lib": month,
 		"runtime-0123456789abcdef.ready":                month,
-		"runtime-fedcba9876543210/":                     hour,
+		"runtime-fedcba9876543210/":                     week,
+		"runtime-1111111111111111/":                     hour,
+		"runtime-1111111111111111.ready":                hour,
 		".runtime-1/":                                   days,
 		".runtime-1/log":                                days,
 		".runtime-2/":                                   hour,
@@ -110,25 +116,33 @@ func TestPruneCache(t *testing.T) {
 	}
 	want := []string{
 		".runtime-2/",
-		"locks/", "locks/install-0123456789abcdef.lock",
+		"locks/", "locks/install-0123456789abcdef.lock", "locks/runtime-0123456789abcdef.lock", // the runtimes removed under their locks
 		"logs/", "logs/opengrep-2.log",
 		"opengrep-" + pin + "/", "opengrep-" + pin + "/.opengrep-2", "opengrep-" + pin + "/opengrep",
+		"opengrep-1111111111111111/", "opengrep-1111111111111111/opengrep",
 		"opengrep-fedcba9876543210/", "opengrep-fedcba9876543210/opengrep",
 		"other/",
 		"runtime-" + pin + "/",
+		"runtime-1111111111111111.ready",
+		"runtime-1111111111111111/",
 		"runtime-fedcba9876543210/",
 		"selections/", "selections/.tmp-2", "selections/fedcba9876543210.yaml", "selections/notes.txt",
 	}
+	slices.Sort(want)
 	if got := cacheEntries(t, cache); !slices.Equal(got, want) {
 		t.Errorf("after PruneCache, the cache holds\n%q\nwant\n%q", got, want)
 	}
 
+	// A MaxAge below two days keeps what runs mark once a day: here,
+	// the entries of build 1111111111111111.
 	if err := e.PruneCache(&PruneOptions{MaxAge: time.Minute}); err != nil {
 		t.Fatal(err)
 	}
 	want = slices.DeleteFunc(want, func(name string) bool {
 		return strings.HasPrefix(name, "opengrep-fedcba") || strings.HasPrefix(name, "runtime-fedcba") || name == "selections/fedcba9876543210.yaml"
 	})
+	want = append(want, "locks/runtime-fedcba9876543210.lock")
+	slices.Sort(want)
 	if got := cacheEntries(t, cache); !slices.Equal(got, want) {
 		t.Errorf("after PruneCache with a MaxAge of a minute, the cache holds\n%q\nwant\n%q", got, want)
 	}

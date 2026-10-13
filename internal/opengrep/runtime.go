@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -101,6 +102,45 @@ func PrepareRuntime(ctx context.Context, exe, sum, dir string, env []string, log
 	}
 	log.Info("prepared opengrep's runtime", "dir", ready, "took", time.Since(start))
 	return xdgCache(ready), nil
+}
+
+// RemoveRuntime removes name, a runtime that PrepareRuntime prepared in the
+// cache directory dir (runtime-<sha16>, or runtime-<sha16>.ready on
+// Windows), if stale reports true for it once RemoveRuntime holds the lock
+// that PrepareRuntime takes. A held lock means that the runtime is being
+// prepared, and it is kept. A runtime directory is first renamed into a new
+// temporary <dir>/.runtime-*, so that a run that starts meanwhile finds it
+// complete or absent, never half removed. RemoveRuntime reports whether it
+// removed name.
+func RemoveRuntime(dir, name string, stale func(fs.FileInfo) bool) (bool, error) {
+	key := strings.TrimSuffix(strings.TrimPrefix(name, "runtime-"), ".ready")
+	if f, err := openLock(filepath.Join(dir, "locks", "runtime-"+key+".lock")); err == nil {
+		defer f.Close()
+		locked, err := tryLock(f)
+		switch {
+		case err == nil && !locked:
+			return false, nil
+		case locked:
+			defer unlockFile(f)
+		}
+	}
+	path := filepath.Join(dir, name)
+	fi, err := os.Lstat(path)
+	if err != nil || !stale(fi) {
+		return false, nil
+	}
+	if !fi.IsDir() {
+		return true, os.Remove(path)
+	}
+	tmp, err := os.MkdirTemp(dir, ".runtime-*")
+	if err != nil {
+		return false, err
+	}
+	if err := os.Rename(path, filepath.Join(tmp, name)); err != nil {
+		os.Remove(tmp)
+		return false, err
+	}
+	return true, os.RemoveAll(tmp)
 }
 
 // isPrepared reports whether ready, a runtime directory or, on Windows, a

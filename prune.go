@@ -10,12 +10,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/odipar/gogrep/internal/opengrep"
 )
 
 const (
 	defaultMaxAge = 30 * 24 * time.Hour // PruneOptions.MaxAge's default
 	tempAge       = 24 * time.Hour      // how old a crashed run's temporaries must be for PruneCache
-	markEvery     = 24 * time.Hour      // how often a process marks what it uses
+	markEvery     = 24 * time.Hour      // how often a process marks the executable and runtime it uses
 )
 
 // selectionFile matches the names of the rule selections that rules.Write
@@ -25,7 +27,8 @@ var selectionFile = regexp.MustCompile(`^[0-9a-f]{16}\.yaml$`)
 // PruneOptions configure Engine.PruneCache; nil means the zero PruneOptions.
 type PruneOptions struct {
 	// MaxAge is how long an entry that no run has used is kept. Zero means
-	// 30 days.
+	// 30 days. Executables and runtimes are kept for at least two days,
+	// whatever MaxAge says, as a run marks them at most once a day.
 	MaxAge time.Duration
 }
 
@@ -34,9 +37,11 @@ type PruneOptions struct {
 // than this version's pins. It also removes temporaries and per-run logs
 // left by crashed runs once they are a day old. The current pins'
 // executables and runtimes are kept. A run marks what it uses before
-// starting opengrep, at most once a day per process. PruneCache never runs
-// by itself, and it touches nothing outside CacheDir, opengrep's default
-// runtime directory included.
+// starting opengrep, at most once a day per process for an executable and
+// its runtime, and every time for a selection. A runtime that is being
+// prepared is kept, and one that is removed disappears at once for runs
+// that start meanwhile. PruneCache never runs by itself, and it touches
+// nothing outside CacheDir, opengrep's default runtime directory included.
 func (e *Engine) PruneCache(opts *PruneOptions) error {
 	if opts == nil {
 		opts = &PruneOptions{}
@@ -67,6 +72,9 @@ func (e *Engine) PruneCache(opts *PruneOptions) error {
 		return err
 	}
 
+	// What markUsed marks may be in use although its time is as old as
+	// markEvery.
+	usedAge := max(maxAge, 2*markEvery)
 	p := &pruner{now: time.Now(), e: e}
 	for _, d := range entries {
 		name, path := d.Name(), filepath.Join(e.cacheDir, d.Name())
@@ -74,7 +82,7 @@ func (e *Engine) PruneCache(opts *PruneOptions) error {
 		case strings.HasPrefix(name, ".runtime-"):
 			p.remove(path, tempAge)
 		case strings.HasPrefix(name, "opengrep-"):
-			if !current[strings.TrimPrefix(name, "opengrep-")] && p.remove(path, maxAge) {
+			if !current[strings.TrimPrefix(name, "opengrep-")] && p.remove(path, usedAge) {
 				continue
 			}
 			p.removeIn(path, tempAge, func(name string) bool {
@@ -82,7 +90,7 @@ func (e *Engine) PruneCache(opts *PruneOptions) error {
 			})
 		case strings.HasPrefix(name, "runtime-"):
 			if !current[strings.TrimSuffix(strings.TrimPrefix(name, "runtime-"), ".ready")] {
-				p.remove(path, maxAge)
+				p.removeRuntime(name, usedAge)
 			}
 		case name == "selections":
 			p.removeIn(path, maxAge, selectionFile.MatchString)
@@ -114,6 +122,27 @@ func (p *pruner) remove(path string, age time.Duration) bool {
 	}
 	p.e.log.Info("pruned the cache", "removed", path, "modified", fi.ModTime())
 	return true
+}
+
+// removeRuntime removes the runtime name, as remove does, but under the
+// lock that its preparation takes, and atomically for runs that start
+// meanwhile.
+func (p *pruner) removeRuntime(name string, age time.Duration) {
+	stale := func(fi fs.FileInfo) bool { return p.now.Sub(fi.ModTime()) > age }
+	if fi, err := os.Lstat(filepath.Join(p.e.cacheDir, name)); err != nil || !stale(fi) {
+		return
+	}
+	var modified time.Time
+	removed, err := opengrep.RemoveRuntime(p.e.cacheDir, name, func(fi fs.FileInfo) bool {
+		modified = fi.ModTime()
+		return stale(fi)
+	})
+	if err != nil {
+		p.errs = append(p.errs, err)
+	}
+	if removed {
+		p.e.log.Info("pruned the cache", "removed", filepath.Join(p.e.cacheDir, name), "modified", modified)
+	}
 }
 
 // removeIn removes the entries of dir whose names match, as remove does.
