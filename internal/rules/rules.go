@@ -50,12 +50,18 @@ func FromTarGz(data []byte) (Set, error) {
 	}
 }
 
-// FromFS reads every file in fsys.
-func FromFS(fsys fs.FS) (Set, error) {
+// FromFS reads every file in fsys, except those under the directories whose
+// slash-separated paths are in skipDirs.
+func FromFS(fsys fs.FS, skipDirs ...string) (Set, error) {
 	set := Set{}
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		switch {
+		case err != nil:
 			return err
+		case d.IsDir() && slices.Contains(skipDirs, p):
+			return fs.SkipDir
+		case d.IsDir():
+			return nil
 		}
 		set[p], err = fs.ReadFile(fsys, p)
 		return err

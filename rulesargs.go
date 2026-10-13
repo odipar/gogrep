@@ -32,15 +32,18 @@ var builtinSuites embed.FS
 
 // A project's own rules and suites live under opengrep/gogrep in the current
 // directory. Project rules form the "project" rule set; a project suite
-// shadows a built-in one of the same name.
+// shadows a built-in one of the same name. The rules directory's test/
+// subdirectory holds rule test fixtures and is never loaded as rules.
 var (
 	projectRulesDir  = filepath.Join("opengrep", "gogrep", "rules")
+	projectTestsDir  = filepath.Join(projectRulesDir, testsDir)
 	projectSuitesDir = filepath.Join("opengrep", "gogrep", "suites")
 )
 
 const (
 	defaultSuite  = "code-scanning"
 	bundledConfig = "bundled" // --config value that selects the bundled rules
+	testsDir      = "test"    // the directory of a rule set reserved for test fixtures
 )
 
 // selection is how gogrep's own flags select rules.
@@ -211,7 +214,8 @@ func dedupe(rs []*rules.Rule) []*rules.Rule {
 }
 
 // loadEnv parses all rule sets: the bundled ones, gogrep's own and the
-// project's. Groups: "bundled" (the pinned third-party sets) and "all".
+// project's, the last two without their test fixtures. Groups: "bundled" (the
+// pinned third-party sets) and "all".
 func loadEnv() (*suite.Env, error) {
 	sets := map[string]rules.Set{}
 	var bundled []string
@@ -227,12 +231,12 @@ func loadEnv() (*suite.Env, error) {
 	if err != nil {
 		return nil, err
 	}
-	if sets["gogrep"], err = rules.FromFS(own); err != nil {
+	if sets["gogrep"], err = rules.FromFS(own, testsDir); err != nil {
 		return nil, err
 	}
 	sets["project"] = rules.Set{}
 	if fi, err := os.Stat(projectRulesDir); err == nil && fi.IsDir() {
-		if sets["project"], err = rules.FromFS(os.DirFS(projectRulesDir)); err != nil {
+		if sets["project"], err = rules.FromFS(os.DirFS(projectRulesDir), testsDir); err != nil {
 			return nil, fmt.Errorf("reading %s: %w", projectRulesDir, err)
 		}
 	}
