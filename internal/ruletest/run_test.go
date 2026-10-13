@@ -189,6 +189,7 @@ func checkNoTemp(t *testing.T, tests []*Test) {
 }
 
 func TestRun(t *testing.T) {
+	t.Parallel()
 	r := newFakeRunner()
 	tests := r.addTests(t)
 	code, stdout, stderr := r.run(context.Background(), tests)
@@ -220,6 +221,7 @@ func TestRun(t *testing.T) {
 // The report does not depend on the number of opengrep processes, nor on
 // the order in which they finish.
 func TestRunOrder(t *testing.T) {
+	t.Parallel()
 	for _, threads := range []int{1, 3, 8} {
 		r := newFakeRunner()
 		r.Threads = threads
@@ -255,6 +257,7 @@ func TestRunOrder(t *testing.T) {
 
 // The first opengrep run, which may unpack opengrep, runs alone.
 func TestRunFirstAlone(t *testing.T) {
+	t.Parallel()
 	r := newFakeRunner()
 	r.Threads = 8
 	tests := r.addTests(t)
@@ -274,6 +277,7 @@ func TestRunFirstAlone(t *testing.T) {
 }
 
 func TestRunLearn(t *testing.T) {
+	t.Parallel()
 	r := newFakeRunner()
 	r.Learn = true
 	tests := r.addTests(t)[:3]
@@ -316,6 +320,7 @@ All 3 tests passed.
 }
 
 func TestRunKeepSARIF(t *testing.T) {
+	t.Parallel()
 	r := newFakeRunner()
 	r.KeepSARIF = true
 	tests := r.addTests(t)
@@ -333,26 +338,27 @@ func TestRunKeepSARIF(t *testing.T) {
 }
 
 func TestRunShowOutput(t *testing.T) {
+	t.Parallel()
 	r := newFakeRunner()
 	r.Bin, r.ShowOutput = "/opt/open grep/opengrep", true
-	dir := filepath.Join(t.TempDir(), "it's")
+	dir := t.TempDir()
 	out := results("m")
 	out.Stderr = []byte("\n  \nScanning 1 file.\n\nRan 1 rule.  \n\n")
 	tests := []*Test{
-		r.addTest(t, dir, "a", fixtureSpec{files: map[string]string{"expected.txt": "| a.go:1:1:1:2 | m |\n"}, out: out}),
-		r.addTest(t, dir, "b", fixtureSpec{setup: errors.New("no code samples")}),
+		r.addTest(t, dir, "it's/a", fixtureSpec{files: map[string]string{"expected.txt": "| a.go:1:1:1:2 | m |\n"}, out: out}),
+		r.addTest(t, dir, "it's/b", fixtureSpec{setup: errors.New("no code samples")}),
 	}
 	sample := "." + string(filepath.Separator) + "a.go"
 	want := `Executing 2 tests.
-[1/2] PASSED test/a
-  $ (cd '` + strings.ReplaceAll(filepath.ToSlash(dir), "'", `'\''`) + `/a' && '/opt/open grep/opengrep' scan --config ` + testConfig + ` --no-rewrite-rule-ids --sarif --disable-version-check --timeout 0 -j 1 -- ` + commandLine([]string{sample}) + `)
+[1/2] PASSED test/it's/a
+  $ (cd 'test/it'\''s/a' && '/opt/open grep/opengrep' scan --config ` + testConfig + ` --no-rewrite-rule-ids --sarif --disable-version-check --timeout 0 -j 1 -- ` + commandLine([]string{sample}) + `)
   > Scanning 1 file.
   >
   > Ran 1 rule.
-[2/2] FAILED(SETUP) test/b
+[2/2] FAILED(SETUP) test/it's/b
   no code samples
 1 tests passed; 1 tests failed:
-  FAILED: test/b
+  FAILED: test/it's/b
 `
 	if code, stdout, _ := r.run(context.Background(), tests); code != 1 || stdout != want {
 		t.Errorf("Run --show-opengrep-output = %d, stdout\n%s\nwant 1, stdout\n%s", code, stdout, want)
@@ -362,6 +368,7 @@ func TestRunShowOutput(t *testing.T) {
 // A fixture directory that is a symlink fails at SETUP, and gogrep never
 // removes files through it.
 func TestRunSymlinkedFixture(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")
 	writeTree(t, target, map[string]string{"actual.txt": "kept\n", "actual.sarif": "kept"})
@@ -383,6 +390,7 @@ func TestRunSymlinkedFixture(t *testing.T) {
 }
 
 func TestCommandLine(t *testing.T) {
+	t.Parallel()
 	got := commandLine([]string{"/bin/opengrep", "scan", "--config=/a b/c.yaml", "--", "./x-y_z.go", "./it's.go", "", `.\a.go`, "./h€.go"})
 	want := `/bin/opengrep scan '--config=/a b/c.yaml' -- ./x-y_z.go './it'\''s.go' '' '.\a.go' './h€.go'`
 	if got != want {
@@ -411,6 +419,7 @@ func (w *watchWriter) Write(p []byte) (int, error) {
 }
 
 func TestRunInterrupt(t *testing.T) {
+	t.Parallel()
 	for _, threads := range []int{1, 4} {
 		r := newFakeRunner()
 		r.Threads = threads
@@ -467,6 +476,7 @@ func TestRunInterrupt(t *testing.T) {
 }
 
 func TestRunWriteError(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("needs a directory that its owner cannot write to")
 	}
@@ -485,6 +495,7 @@ func TestRunWriteError(t *testing.T) {
 }
 
 func TestRunLearnErrors(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("needs files that their owner cannot read or write")
 	}
@@ -531,6 +542,7 @@ func TestRunLearnErrors(t *testing.T) {
 }
 
 func TestAccept(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	r := newFakeRunner()
 	tests := []*Test{
@@ -583,6 +595,7 @@ func TestAccept(t *testing.T) {
 }
 
 func TestPlan(t *testing.T) {
+	t.Parallel()
 	all := ruleSet("project", "project.go.no-exec-command", "project.go.other")
 	fixtures := []*Fixture{
 		{Name: "a", Namespace: "go", Ref: "no-exec-command"},
@@ -614,6 +627,7 @@ func TestPlan(t *testing.T) {
 }
 
 func TestWarnUntested(t *testing.T) {
+	t.Parallel()
 	project := ruleSet("project", "project.go.c", "project.go.a", "project.go.b")
 	tested := func(ids ...string) []*Test {
 		tests := []*Test{{Fixture: &Fixture{Name: "broken"}}}
@@ -639,6 +653,7 @@ func TestWarnUntested(t *testing.T) {
 }
 
 func TestThreads(t *testing.T) {
+	t.Parallel()
 	cpus := runtime.NumCPU()
 	tests := []struct{ threads, n, want int }{
 		{0, 1000, cpus},

@@ -122,7 +122,7 @@ func (r *Runner) Run(ctx context.Context, tests []*Test, stdout, stderr io.Write
 		v.print(stdout, i+1, len(tests), t)
 		if r.ShowOutput && t.Rule != nil {
 			// opengrep ran in the fixture, on sample paths relative to it.
-			fmt.Fprintf(stdout, "  $ (cd %s && %s)\n", commandLine([]string{filepath.ToSlash(t.Dir)}), commandLine(r.args(t)))
+			fmt.Fprintf(stdout, "  $ (cd %s && %s)\n", commandLine([]string{t.Name}), commandLine(r.args(t)))
 			for _, l := range quoted(outs[i].Stderr) {
 				fmt.Fprintf(stdout, "  %s\n", l)
 			}

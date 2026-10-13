@@ -109,7 +109,7 @@ func runTest(args []string, sel selection, stdout, stderr io.Writer) int {
 		io.WriteString(stdout, testUsage)
 		return 0
 	}
-	fixtures, err := ruletest.Discover(projectTestsDir, a.paths)
+	fixtures, err := discover(a.paths)
 	if err == nil {
 		if a.accept {
 			return ruletest.Accept(fixtures, stdout, stderr)
@@ -121,6 +121,20 @@ func runTest(args []string, sel selection, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stderr, "gogrep: %v\n", err)
 	return 2
+}
+
+// discover returns the fixtures that paths select in the project in the
+// current directory.
+func discover(paths []string) ([]*ruletest.Fixture, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	fixtures, err := ruletest.Discover(wd, projectTestsDir, paths)
+	if errors.Is(err, ruletest.ErrNoRoot) {
+		return nil, fmt.Errorf("no %s directory here; run gogrep test from the project root", filepath.ToSlash(projectTestsDir))
+	}
+	return fixtures, err
 }
 
 // runFixtures runs the tests of the fixtures whose rules sel selects and

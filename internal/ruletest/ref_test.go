@@ -7,6 +7,7 @@ import (
 )
 
 func TestParseRef(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name, data, want, err string
 	}{
@@ -40,6 +41,7 @@ func TestParseRef(t *testing.T) {
 }
 
 func TestResolve(t *testing.T) {
+	t.Parallel()
 	project := ruleSet("project", "project.go.no-exec-command", "project.go.net.dial", "project.net.dial", "project.gogrep.x")
 	all := append(ruleSet("gogrep", "gogrep.go.y", "gogrep.x"), project...)
 	all = append(all, ruleSet("opengrep-rules", "opengrep-rules.go.lang.security.audit.dangerous-exec-command")...)

@@ -72,6 +72,7 @@ func recorded(t *testing.T, name string) (*Log, int) {
 // TestDecodeSARIFRecorded pins down what opengrep reports in each recorded
 // run, which classifying a run relies on.
 func TestDecodeSARIFRecorded(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		code    int
@@ -113,6 +114,7 @@ func TestDecodeSARIFRecorded(t *testing.T) {
 }
 
 func TestRenderRecorded(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		samples []string
@@ -193,6 +195,7 @@ func sarifLog(results []any, notes []any) []byte {
 }
 
 func TestRender(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		results, notes []any
@@ -280,6 +283,7 @@ func TestRender(t *testing.T) {
 }
 
 func TestRenderErrors(t *testing.T) {
+	t.Parallel()
 	region := `"region":{"startLine":1,"startColumn":1,"endLine":1,"endColumn":2}`
 	tests := []struct {
 		name, result, err string
@@ -316,6 +320,7 @@ func TestRenderErrors(t *testing.T) {
 }
 
 func TestDecodeSARIFErrors(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name, data, err string // err is a prefix of the error
 	}{
@@ -340,6 +345,7 @@ func TestDecodeSARIFErrors(t *testing.T) {
 }
 
 func TestEscape(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ in, want string }{
 		{"plain text", "plain text"},
 		{"bad a|b\n\tc", `bad a\|b\n\tc`},
@@ -362,6 +368,7 @@ func TestEscape(t *testing.T) {
 }
 
 func TestSamplePath(t *testing.T) {
+	t.Parallel()
 	samples := []string{"a.go", `a\b.txt`, "a/b.txt", "c:/x.txt", "sub/a.go"}
 	tests := []struct {
 		uri  string
@@ -406,12 +413,12 @@ func TestSamplePath(t *testing.T) {
 // On Unix, sample names may hold a backslash, and a directory may be named
 // like a Windows drive.
 func TestRenderUnixNames(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows forbids these file names")
 	}
 	dir := t.TempDir()
-	t.Chdir(dir)
-	fx := filepath.Join(testRoot, "x", "names")
+	fx := filepath.Join(dir, testRoot, "x", "names")
 	files := map[string]string{"rule.ref": "x\n", `a\b.txt`: "TODO\n", "a/b.txt": "TODO\n", "c:/x.txt": "TODO\n"}
 	for name, data := range files {
 		p := filepath.Join(fx, name)
@@ -422,7 +429,7 @@ func TestRenderUnixNames(t *testing.T) {
 			t.Skipf("file system forbids %q: %v", name, err)
 		}
 	}
-	fixtures, err := Discover(testRoot, nil)
+	fixtures, err := Discover(dir, testRoot, nil)
 	if err != nil || len(fixtures) != 1 || fixtures[0].Setup != nil {
 		t.Fatalf("Discover = %v, %v", fixtures, err)
 	}
@@ -445,6 +452,7 @@ func TestRenderUnixNames(t *testing.T) {
 }
 
 func TestSlashPaths(t *testing.T) {
+	t.Parallel()
 	samples := []string{"a.go", "sub/broken.go", "x/a.go", "y/x/a.go"}
 	tests := []struct {
 		name, msg string
@@ -468,6 +476,7 @@ func TestSlashPaths(t *testing.T) {
 }
 
 func TestNormalize(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		in   string
 		want []string
