@@ -470,10 +470,13 @@ pass through. That annotation-based runner is still available as
 ## Building
 
 ```sh
-go run ./tools/fetch-opengrep                  # download the pinned opengrep and rule sets
-go build -tags gogrep_bundled -o gogrep .      # build with them embedded
+go run ./tools/fetch-opengrep                  # download the pinned opengrep
+go build -tags gogrep_bundled -o gogrep .      # build with it embedded
 go test -tags gogrep_bundled ./...             # unit and integration tests
 ```
+
+The pinned rule sets are committed in [internal/rulesets](internal/rulesets)
+and embedded in every build, with or without `gogrep_bundled`.
 
 On Linux, `-tags gogrep_bundled,gogrep_musl` embeds the musl (Alpine) build
 of opengrep instead; fetch it with `go run ./tools/fetch-opengrep
@@ -488,11 +491,15 @@ output with [testdata/golden](testdata/golden). They are skipped with
 `-short`, and when the build finds no opengrep of the version pinned in
 `opengrep.json`.
 
-`go install github.com/odipar/gogrep@latest` builds the plain wrapper instead.
-It runs the `opengrep` on your `PATH` and has no bundled rules. To move to a
-newer opengrep, run `go run ./tools/fetch-opengrep -pin <tag>` and commit
-`opengrep.json`. Pushing a `v*` tag builds and publishes every platform as a
-GitHub release.
+`go install github.com/odipar/gogrep@latest` builds gogrep without the
+opengrep binary: it has the same bundled rule sets, and runs the `opengrep`
+on your `PATH`. To move to a newer opengrep, run
+`go run ./tools/fetch-opengrep -pin <tag>` and commit `opengrep.json`. To
+move a rule set to another commit, change its `commit` in `opengrep.json`,
+run `go run ./tools/fetch-opengrep`, and commit `opengrep.json` with the
+archive and stamp it writes to `internal/rulesets`; CI checks that each
+stamp matches its pin. Pushing a `v*` tag builds and publishes every
+platform as a GitHub release.
 
 ## License
 

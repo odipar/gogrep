@@ -2,10 +2,7 @@
 
 package bundle
 
-import "embed"
-
 var (
-	binary       []byte
-	sum          string
-	ruleArchives embed.FS
+	binary []byte
+	sum    string
 )

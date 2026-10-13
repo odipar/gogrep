@@ -1,7 +1,9 @@
-// Command fetch-opengrep downloads the opengrep binaries and the rule set
-// pinned in opengrep.json into internal/bundle/bin, verifying each SHA-256
-// (and the rules' git commit), so that gogrep can be built with
-// -tags gogrep_bundled.
+// Command fetch-opengrep downloads the opengrep binaries pinned in
+// opengrep.json into internal/bundle/bin, verifying each SHA-256, so that
+// gogrep can be built with -tags gogrep_bundled. It also keeps the rule set
+// archives committed in internal/rulesets in step with opengrep.json: a rule
+// set whose stamp is not its pin's is fetched at the pinned git commit,
+// verified and packed again, for you to commit.
 //
 // Usage:
 //
@@ -29,8 +31,9 @@ import (
 )
 
 const (
-	repo   = "opengrep/opengrep"
-	outDir = "internal/bundle/bin"
+	repo     = "opengrep/opengrep"
+	outDir   = "internal/bundle/bin"
+	rulesDir = "internal/rulesets"
 )
 
 type config struct {

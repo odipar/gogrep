@@ -13,8 +13,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/odipar/gogrep/internal/bundle"
 	"github.com/odipar/gogrep/internal/rules"
+	"github.com/odipar/gogrep/internal/rulesets"
 	"github.com/odipar/gogrep/internal/suite"
 )
 
@@ -125,12 +125,6 @@ func withRules(args []string, sel selection) ([]string, error) {
 	env, err := loadEnv()
 	if err != nil {
 		return nil, err
-	}
-	if env.Count() == 0 {
-		if useBundled {
-			return nil, errors.New("this gogrep build has no bundled rules")
-		}
-		return args, nil // nothing bundled: leave the scan to opengrep
 	}
 	selected, err := sel.resolve(env)
 	if err != nil {
@@ -251,7 +245,7 @@ func dedupe(rs []*rules.Rule) []*rules.Rule {
 func loadEnv() (*suite.Env, error) {
 	sets := map[string]rules.Set{}
 	var bundled []string
-	for name, archive := range bundle.RuleSets() {
+	for name, archive := range rulesets.Archives() {
 		set, err := rules.FromTarGz(archive)
 		if err != nil {
 			return nil, fmt.Errorf("reading bundled rule set %s: %w", name, err)

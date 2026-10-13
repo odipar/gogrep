@@ -175,7 +175,7 @@ var (
 
 - **The third-party sets.** `internal/rulesets` embeds `*.tar.gz` and `*.commit` with no build tag.
 - **The pins.** `opengrep.json` is parsed by `internal/pin.Parse` inside a `sync.OnceValues`. The result is immutable.
-- **What `go get` delivers.** About 0.6 MB: today's 156,675-byte module zip plus the 457,860 bytes of archives.
+- **What `go get` delivers.** About 0.6 MB: today's 156,675-byte module zip plus the 457,862 bytes of archives.
 - **Rule count.** Every build reports the same 2,121 bundled rules that `gogrep rules --suite all` reports from the repository root today (verified; `rules/` holds only `README.md`).
 
 ### 2.4 The CLI as a thin layer
@@ -1162,14 +1162,15 @@ The package documentation's section "Untrusted repositories" is this table:
 
 | Archive | Size | Contents | License |
 |---|---|---|---|
-| `opengrep-rules.tar.gz` | 428,508 B | 1,934 tar entries: 1,933 rule files plus `LICENSE` | LGPL-2.1 with the Commons Clause |
-| `0xdea.tar.gz` | 22,565 B | rule files plus `LICENSE` | MIT |
+| `opengrep-rules.tar.gz` | 428,511 B | 1,934 tar entries: 1,933 rule files plus `LICENSE` | LGPL-2.1 with the Commons Clause |
+| `0xdea.tar.gz` | 22,564 B | rule files plus `LICENSE` | MIT |
 | `semgrep-go.tar.gz` | 6,787 B | rule files plus `LICENSE` | MIT |
 
 - **Where they live.**
   - They are committed to `internal/rulesets/` with their `.commit` stamps and embedded with no build tag. Together they hold 2,121 rules.
   - `.gitattributes` marks them `binary`.
   - `tools/fetch-opengrep` writes them there with its existing deterministic packing: only rule YAML plus licence files, with the commit checked by `git rev-parse`.
+  - The committed archives were packed afresh by that tool (tar entries 0o600). The archives in `internal/bundle/bin/rules` of older checkouts, packed before the tool switched to 0o600, differ only in that mode: the same entries, in the same order, with the same SHA-256 each (checked).
   - Each re-pin adds about 458 KB to the history.
   - Every file name is valid in a module, and none collide under case folding (checked).
 - **Why archives, not a YAML tree.** A plain YAML tree would mean 2,000+ files cluttering search and language statistics, and gogrep would scan its own copies.
@@ -1923,7 +1924,7 @@ After each `v*` tag, a release smoke job runs `go get github.com/odipar/gogrep@$
 |---|---|---|---|
 | 0 | Add the public Go API design | `docs/design/library-api.md` | It renders; its links resolve |
 | 1 | Rename the build tags to `gogrep_bundled`/`gogrep_musl`; compile bundled builds everywhere | `internal/bundle/embed_*.go`, `none.go`, `embed_rules.go`; new `embed_other.go` (empty `binary` and `sum`), new `oldtag.go` (`//go:build bundled && !gogrep_bundled`, an undefined identifier naming `gogrep_bundled`); `.github/workflows/{test,release,gogrep}.yml` (the release maps variant `musl` to `gogrep_musl`); README "Building" | Both vet tag sets pass. `GOOS=freebsd GOARCH=amd64` and `GOOS=linux GOARCH=386 go build -tags gogrep_bundled .` compile (they failed before). `go build -tags bundled .` fails naming `gogrep_bundled`. A `workflow_dispatch` release dry run builds all 7 targets. |
-| 2 | Track the rule-set archives and embed them in every build | new `internal/rulesets/{rulesets.go,*.tar.gz,*.commit}`; `tools/fetch-opengrep/{main,rules}.go` write there; `internal/bundle` drops `embed_rules.go` and `RuleSets`; `cmd/gogrep/rulesargs.go` (`loadEnv` reads `rulesets`; the "no bundled rules" branches go); `internal/ruletest/ref.go` (hint removed) and its test; `cmd/gogrep/testcmd_test.go` (`checkGolden` stripping removed); `.gitattributes`; `NOTICE.md`; README; `test.yml` stamp check | Unbundled `go test ./...` runs the goldens with bundled rules and gets the same output as a bundled run. From the repository root, `go run . rules --suite all` prints `2121 rules`. `git ls-files internal/rulesets` lists 6 files, about 458 KB. `go run ./tools/fetch-opengrep` leaves `git status` clean. The stamp check fails on a deliberately edited stamp. |
+| 2 | Track the rule-set archives and embed them in every build | new `internal/rulesets/{rulesets.go,*.tar.gz,*.commit}`; `tools/fetch-opengrep/{main,rules}.go` write there; `internal/bundle` drops `embed_rules.go` and `RuleSets`; `cmd/gogrep/rulesargs.go` (`loadEnv` reads `rulesets`; the "no bundled rules" branches go); `internal/ruletest/ref.go` (hint removed) and its test; `cmd/gogrep/testcmd_test.go` (`checkGolden` stripping removed); `.gitattributes`; `NOTICE.md`; README; `test.yml` stamp check | Unbundled `go test ./...` runs the goldens with bundled rules and gets the same output as a bundled run. From the repository root, `go run . rules --suite all` prints `2121 rules`. `git ls-files internal/rulesets` lists the 6 archive and stamp files (about 458 KB) beside `rulesets.go` and its test. `go run ./tools/fetch-opengrep` leaves `git status` clean. The stamp check fails on a deliberately edited stamp. |
 | 3 | `internal/pin` and verified extraction of the embedded binary | new `internal/pin` and tests (platform keys, musl detection with `fstest.MapFS`); new `internal/opengrep/{extract,verify}.go` and tests; `internal/bundle`: `Binary()` only, `sum` and the `.sha256` embeds removed; `main.go` passes `opengrep.json` in `Assets.Pins`; `cmd/gogrep/run.go` extracts through `internal/opengrep`; `tools/fetch-opengrep` uses `internal/pin` and stops writing `.sha256` files | `go test -race -tags gogrep_bundled ./...`, with 8 goroutines extracting one injected binary (the old `bundle.sum` race) clean. A bundled test checks `sha256(bundle.Binary())` against the pin. The extraction path is unchanged (`opengrep-<sha16>`). An invalid pin is an error, not a panic. |
 | 4 | One context-aware opengrep runner; `gogrep test` uses it | new `internal/opengrep/{run,env,procgroup_unix,procgroup_windows,procgroup_other}.go` and tests (tree kill, `WaitDelay`, ETXTBSY retry through an injected start function, `utf8Env` reading its slice, prefix stripping); `cmd/gogrep/testcmd.go` (`execFixture` uses it); `cmd/gogrep/procgroup_*.go` shrink to `signals_{unix,other}.go` | `TestExecFixtureKillsTree` moves and passes. `TestTestOpengrepBin` passes. Goldens are unchanged. |
 | 5 | Scans in their own process group; the CLI catches signals; SARIF checks | `cmd/gogrep/run.go` (`scan` through the runner, own group, `NotifyContext`, 130; other forwards and `opengrep` foreground with `signal.Ignore`; the stdin rule), `sarif.go` (chmod 0o600; exit 0 without requested SARIF gives 2), `rulesargs.go` (injected `--disable-version-check`); tests | `TestRunScan`'s argv gains `--disable-version-check`. New: SIGINT during a fake scan gives 130, `gogrep: interrupted`, and the grandchild is gone; `-o` ends 0o600; exit 0 with empty stdout gives 2; a probe child started after an in-process scan does not start with SIGINT ignored. `TestRunOpengrep*` unchanged. |

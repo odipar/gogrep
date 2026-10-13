@@ -4,9 +4,10 @@ gogrep is Copyright (C) 2026 Robbert van Dalen and is licensed under the
 GNU Lesser General Public License v2.1 (see [LICENSE](LICENSE)), the same
 license as opengrep.
 
-Release builds of gogrep (`-tags gogrep_bundled`) also contain the third-party
-components below, each under its own license. Their versions are pinned in
-[opengrep.json](opengrep.json).
+The gogrep module and every build contain the rule sets below; release
+builds (`-tags gogrep_bundled`) also contain the opengrep binary. Each of
+these third-party components is under its own license, and their versions
+are pinned in [opengrep.json](opengrep.json).
 
 ## opengrep
 
@@ -26,8 +27,9 @@ runs it as a separate program.
 
 The Commons Clause does not grant the right to sell a product or service
 whose value derives entirely or substantially from these rules. The full
-license text is embedded with the rules and written next to them as
-`opengrep-rules/LICENSE` when gogrep extracts them.
+license text is the `LICENSE` file in the rules' archive,
+[internal/rulesets/opengrep-rules.tar.gz](internal/rulesets), which every
+build embeds.
 
 ## 0xdea/semgrep-rules (rule set `0xdea`)
 
@@ -39,5 +41,5 @@ license text is embedded with the rules and written next to them as
 - Source: https://github.com/dgryski/semgrep-go
 - License: MIT, Copyright (c) 2020 Damian Gryski
 
-Each rule set's license file travels with it and is written next to its
-rules as `<rule set>/LICENSE` when gogrep extracts them.
+Each rule set's license file travels with it as `LICENSE` in its archive,
+`internal/rulesets/<rule set>.tar.gz`.

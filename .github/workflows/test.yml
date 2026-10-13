@@ -28,6 +28,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Check the rule-set stamps against opengrep.json
+        run: go test -run '^TestStampsMatchPins$' ./internal/rulesets
+
       - name: Fetch the pinned opengrep for this platform
         run: go run ./tools/fetch-opengrep
 
@@ -41,12 +44,13 @@ jobs:
         run: |
           GOOS=freebsd GOARCH=amd64 go build -tags gogrep_bundled ./...
           GOOS=linux GOARCH=386 go build -tags gogrep_bundled ./...
-          if out=$(go build -tags bundled ./... 2>&1); then
-            echo "::error::go build -tags bundled succeeded; it must fail naming gogrep_bundled"
+          # The compiler's message is not echoed on success, so that the Go
+          # problem matcher does not report it as an error.
+          if out=$(go build -tags bundled ./... 2>&1) || ! grep -q gogrep_bundled <<< "$out"; then
+            echo "$out"
+            echo "::error::go build -tags bundled must fail naming gogrep_bundled"
             exit 1
           fi
-          echo "$out"
-          grep -q gogrep_bundled <<< "$out"
 
       - name: Test
         run: go test -tags gogrep_bundled ./...

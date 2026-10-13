@@ -140,11 +140,9 @@ func requireOpengrep(t *testing.T) {
 }
 
 // checkGolden compares output with the golden file testdata/golden/name, or
-// rewrites the file with -update. The golden files hold the output of a
-// bundled build; other builds add a hint to unresolved rule references.
+// rewrites the file with -update.
 func checkGolden(t *testing.T, name, output string) {
 	t.Helper()
-	output = strings.ReplaceAll(output, "; this gogrep build has no bundled rule sets", "")
 	file := filepath.Join(repoDir, "testdata", "golden", name)
 	if *update {
 		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {

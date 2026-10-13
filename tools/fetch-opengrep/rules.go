@@ -26,17 +26,14 @@ type rulesPin struct {
 }
 
 // fetchRules clones the pinned rules commit and packs its rule files, plus
-// LICENSE, into the deterministic archive outDir/rules/<name>.tar.gz.
+// LICENSE, into the deterministic archive rulesDir/<name>.tar.gz, next to the
+// stamp <name>.commit.
 func fetchRules(pin rulesPin) error {
 	if pin.Name == "" || strings.ContainsAny(pin.Name, `/\.`) {
 		return fmt.Errorf("invalid rule set name %q", pin.Name)
 	}
-	dir := filepath.Join(outDir, "rules")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	out := filepath.Join(dir, pin.Name+".tar.gz")
-	stamp := filepath.Join(dir, pin.Name+".commit")
+	out := filepath.Join(rulesDir, pin.Name+".tar.gz")
+	stamp := filepath.Join(rulesDir, pin.Name+".commit")
 	want := pin.Commit + " " + pin.Path + " " + pin.Lang
 	if got, err := os.ReadFile(stamp); err == nil && string(got) == want {
 		if _, err := os.Stat(out); err == nil {
