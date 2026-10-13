@@ -679,7 +679,8 @@ type ScanOptions struct {
 	// whole seconds); a negative value means no limit (--timeout 0).
 	// MaxMemoryMB limits the memory for analysing one file (--max-memory,
 	// MiB). MaxTargetBytes skips larger files (--max-target-bytes). Zero
-	// keeps opengrep's default for each.
+	// keeps opengrep's default for each; a negative Jobs, MaxMemoryMB or
+	// MaxTargetBytes is an error.
 	RuleTimeout    time.Duration
 	MaxMemoryMB    int
 	MaxTargetBytes int64
@@ -972,7 +973,7 @@ var (
 // include 2 (fatal error), 4 (invalid pattern), 5 (invalid YAML), 7 (invalid
 // rule or missing config) and 8 (unknown language).
 type ExitError struct {
-	Code   int
+	Code   int     // -1 when a signal ended opengrep
 	Stderr []byte  // the last 64 KiB of opengrep's stderr; nil from Cmd.Run
 	Result *Result // what opengrep wrote, when it is a valid SARIF log; nil from Cmd.Run
 }
@@ -1937,7 +1938,7 @@ After each `v*` tag, a release smoke job runs `go get github.com/odipar/gogrep@$
 | 11 | `Engine.Opengrep`: the lookup order | `internal/engine/opengrep.go`; `internal/opengrep/resolve.go` (`Finder`) and tests; `cmd/gogrep` maps `$OPENGREP_BIN` and `bundle.Binary()` into `Config` (`opengrepBin`, `testBin` and `extractOpengrep` removed; `TestExtractOpengrep`'s cases move to `internal/engine`) | §4.2 precedence tests row by row. `TestTestOpengrepBin` (relative, missing giving `gogrep: exec: `, `.`) and `TestRunScan` "no opengrep" unchanged. |
 | 12 | Prepare opengrep's runtime once; per-process logs; a hermetic `Test` environment | new `internal/opengrep/{runtime,lock,lock_unix,lock_windows,lock_other}.go` and tests; every opengrep child gets `XDG_CACHE_HOME` (POSIX); `Test` strips `SEMGREP_*`/`OPENGREP_*` and sets `SEMGREP_LOG_FILE`; `ruletest`'s first-run gate and `TestRunFirstAlone` removed (the test moves to `internal/opengrep`); `internal/engine/staging.go` gains `OpengrepEnv` and `TestExec` for the CLI until steps 13 and 15; the CLI's fake opengrep answers the preparation's `--version` (it has a log file) at once, and each test that uses it gets a cache of its own; `test.yml` runs the cold-runtime step before the tests, so that Windows's runtime is cold too | Fake-unpack tests: private directory and rename, a warm call is a `stat`, two processes never overlap, a failed `--version` publishes nothing, cancellation cleans up. CI's cold-runtime step: 4 concurrent `gogrep scan` runs exit 0 on all three OSes. Goldens unchanged. |
 | 13 | `Engine.Command`; the CLI's scan, forwards and pass-through use it | `internal/engine/command.go` and tests (injection, `NoProjectRules`, `Foreground`, verbatim args, `Cmd` fields); `ExitError` without `Result`, which step 14 adds; `internal/opengrep.StartError`, so that `Cmd.Run` can wrap `ErrNoOpengrep`; new `internal/fakeopengrep` (the CLI's fake, moved, reporting its working directory and chosen variables too), used by the engine's and the CLI's tests; `cmd/gogrep/forward.go` (the `withRules` decision stays; `SelectionFile` and `OpengrepEnv` leave `staging.go`) | `TestRunScan`, `TestWithRules` (argv read from `Cmd.Args`) and `TestRunOpengrep*` pass unchanged from step 5 |
-| 14 | `Engine.Scan` with typed findings; `ExitError`, `OutputError` | `internal/engine/scan.go` and tests; `testdata/golden/scan-findings.json` | §7.1 Scan tests with the fake. §7.2 integration golden. 8 concurrent scans of 8 copies. `TestNoProcessState`. |
+| 14 | `Engine.Scan` with typed findings; `ExitError`, `OutputError` | `internal/engine/scan.go` and tests; `testdata/golden/scan-findings.json`; `Command` and `Scan` share `ruleArgs` (rule injection) and `Scan` and the staged `TestExec` share `runHermetic` (environment, log file, process group); `internal/fakeopengrep` replays a SARIF file (`GOGREP_TEST_FAKE_SARIF`) and writes N bytes of stderr (`GOGREP_TEST_FAKE_STDERR`) | §7.1 Scan tests with the fake. §7.2 integration golden (the findings without their fingerprints, which may depend on the platform; the test checks that each has one of its own). 8 concurrent scans of 8 copies. `TestNoProcessState` compares signal dispositions and a probe child with those before the calls, so it also passes in a process started with SIGINT ignored. |
 | 15 | `Engine.Test` and `Engine.AcceptTests`; `gogrep test` uses them | `internal/engine/test.go` and tests; `cmd/gogrep/testcmd.go` | All test goldens byte-identical. `ReadOnly`, `Progress` order, cancellation. `TestTestOpengrepBin`'s "unresolved references need no binary" still holds. |
 | 16 | `Engine.InstallOpengrep` and `gogrep install-opengrep` | `internal/engine/install.go`; `internal/opengrep/download.go` and tests (§7.1 `httptest` cases, the 6-process cold install); `cmd/gogrep/install.go`; `tools/fetch-opengrep` uses `opengrep.Download`; README | Unit tests. The CLI test with a wrong `--from` file gives 1. In CI's unbundled leg, `gogrep install-opengrep --from <fetched asset>` and then the integration tests run against the installed copy. |
 | 17 | `Engine.PruneCache` | `internal/engine/prune.go` and tests | Removal by age and pin; current entries kept; temporaries older than a day removed |

@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -17,8 +19,13 @@ import (
 )
 
 // TestMain lets the test binary stand in for opengrep: run with
-// GOGREP_TEST_FAKE_OPENGREP=1, it is fakeopengrep.Main.
+// GOGREP_TEST_FAKE_OPENGREP=1, it is fakeopengrep.Main. Run with
+// GOGREP_TEST_SIGPROBE=1, it prints whether it started with SIGINT ignored.
 func TestMain(m *testing.M) {
+	if os.Getenv("GOGREP_TEST_SIGPROBE") == "1" {
+		fmt.Println(signal.Ignored(os.Interrupt))
+		os.Exit(0)
+	}
 	if os.Getenv("GOGREP_TEST_FAKE_OPENGREP") == "1" {
 		os.Exit(fakeopengrep.Main(os.Args[1:]))
 	}

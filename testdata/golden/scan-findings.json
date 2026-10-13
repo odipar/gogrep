@@ -1,0 +1,110 @@
+{
+  "Rules": 557,
+  "Findings": [
+    {
+      "RuleID": "project.go.no-exec-command",
+      "Level": "warning",
+      "Message": "Avoid running \"ls\" with exec.Command",
+      "Path": "main.go",
+      "StartLine": 9,
+      "StartColumn": 2,
+      "EndLine": 9,
+      "EndColumn": 20,
+      "Snippet": "\texec.Command(\"ls\") // TODO: remove",
+      "Fingerprint": "",
+      "Suppressed": false
+    },
+    {
+      "RuleID": "project.go.no-exec-command-in-prod",
+      "Level": "warning",
+      "Message": "Avoid running \"ls\" with exec.Command outside tests",
+      "Path": "main.go",
+      "StartLine": 9,
+      "StartColumn": 2,
+      "EndLine": 9,
+      "EndColumn": 20,
+      "Snippet": "\texec.Command(\"ls\") // TODO: remove",
+      "Fingerprint": "",
+      "Suppressed": false
+    },
+    {
+      "RuleID": "project.generic.todo-marker",
+      "Level": "note",
+      "Message": "Leftover TODO — finish it before the release",
+      "Path": "main.go",
+      "StartLine": 9,
+      "StartColumn": 24,
+      "EndLine": 9,
+      "EndColumn": 28,
+      "Snippet": "\texec.Command(\"ls\") // TODO: remove",
+      "Fingerprint": "",
+      "Suppressed": false
+    },
+    {
+      "RuleID": "project.go.no-exec-command",
+      "Level": "warning",
+      "Message": "Avoid running \"rm\" with exec.Command",
+      "Path": "main.go",
+      "StartLine": 10,
+      "StartColumn": 2,
+      "EndLine": 10,
+      "EndColumn": 20,
+      "Snippet": "\texec.Command(\"rm\") // nosemgrep",
+      "Fingerprint": "",
+      "Suppressed": true
+    },
+    {
+      "RuleID": "project.go.no-exec-command-in-prod",
+      "Level": "warning",
+      "Message": "Avoid running \"rm\" with exec.Command outside tests",
+      "Path": "main.go",
+      "StartLine": 10,
+      "StartColumn": 2,
+      "EndLine": 10,
+      "EndColumn": 20,
+      "Snippet": "\texec.Command(\"rm\") // nosemgrep",
+      "Fingerprint": "",
+      "Suppressed": true
+    },
+    {
+      "RuleID": "opengrep-rules.problem-based-packs.insecure-transport.go-stdlib.http-request",
+      "Level": "warning",
+      "Message": "Checks for requests sent via http.Get to http:// URLS. This is dangerous because the server is attempting to connect to a website that does not encrypt traffic with TLS. Instead, send requests only to https:// URLS.",
+      "Path": "main.go",
+      "StartLine": 11,
+      "StartColumn": 2,
+      "EndLine": 11,
+      "EndColumn": 33,
+      "Snippet": "\thttp.Get(\"http://example.com/\")",
+      "Fingerprint": "",
+      "Suppressed": false
+    },
+    {
+      "RuleID": "project.generic.todo-marker",
+      "Level": "note",
+      "Message": "Leftover TODO — finish it before the release",
+      "Path": "opengrep/gogrep/rules/generic/todo-marker.yaml",
+      "StartLine": 5,
+      "StartColumn": 23,
+      "EndLine": 5,
+      "EndColumn": 27,
+      "Snippet": "    message: Leftover TODO — finish it before the release",
+      "Fingerprint": "",
+      "Suppressed": false
+    },
+    {
+      "RuleID": "project.generic.todo-marker",
+      "Level": "note",
+      "Message": "Leftover TODO — finish it before the release",
+      "Path": "opengrep/gogrep/rules/generic/todo-marker.yaml",
+      "StartLine": 6,
+      "StartColumn": 14,
+      "EndLine": 6,
+      "EndColumn": 18,
+      "Snippet": "    pattern: TODO",
+      "Fingerprint": "",
+      "Suppressed": false
+    }
+  ],
+  "Diagnostics": null
+}

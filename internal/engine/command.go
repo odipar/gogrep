@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"os/exec"
@@ -78,14 +77,10 @@ func (e *Engine) Command(ctx context.Context, dir string, opts *CommandOptions, 
 		if len(args) == 0 || args[0] != "scan" {
 			return nil, errors.New("a command with a Selection must be a scan")
 		}
-		file, err := e.selectionFile(dir, *opts.Selection, opts.NoProjectRules)
+		// Right after "scan": after a "--" they would be targets.
+		own, _, err := e.ruleArgs(dir, *opts.Selection, opts.NoProjectRules)
 		if err != nil {
 			return nil, err
-		}
-		// Right after "scan": after a "--" they would be targets.
-		own := []string{"--config", file, "--no-rewrite-rule-ids", "--disable-version-check"}
-		if !opts.NoProjectRules {
-			own = append(own, "--exclude="+ProjectTestsDir)
 		}
 		args = slices.Concat(args[:1], own, args[1:])
 	}
@@ -104,29 +99,11 @@ func (e *Engine) Command(ctx context.Context, dir string, opts *CommandOptions, 
 	}, nil
 }
 
-// selectionFile writes the rules that sel selects in dir to an opengrep
-// config file in CacheDir and returns its path.
-func (e *Engine) selectionFile(dir string, sel Selection, noProject bool) (string, error) {
-	env, err := e.loadEnv(dir, noProject)
-	if err != nil {
-		return "", err
-	}
-	selected, err := sel.resolve(env)
-	if err != nil {
-		return "", err
-	}
-	file, err := e.writeRules(selected)
-	if err != nil {
-		return "", fmt.Errorf("writing selected rules: %w", err)
-	}
-	return file, nil
-}
-
 // Run starts the command and waits for it. It returns nil when opengrep
-// exits 0; an *ExitError, with nil Stderr, when it exits non-zero; an error
-// wrapping ErrNoOpengrep when it cannot start; and an error wrapping
-// ctx.Err() when ctx ended it. Run reads nothing opengrep writes:
-// interpreting its output, SARIF included, is up to the caller.
+// exits 0; an *ExitError, with nil Stderr and Result, when it exits
+// non-zero; an error wrapping ErrNoOpengrep when it cannot start; and an
+// error wrapping ctx.Err() when ctx ended it. Run reads nothing opengrep
+// writes: interpreting its output, SARIF included, is up to the caller.
 func (c *Cmd) Run() error {
 	if c.ran {
 		return errors.New("Cmd.Run called twice")

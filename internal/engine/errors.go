@@ -22,6 +22,11 @@ var (
 	// that is neither a project suite nor a built-in one, also when a suite
 	// imports it.
 	ErrUnknownSuite = errors.New("unknown suite")
+
+	// ErrNoSARIF is what every *OutputError is: opengrep exited 0 without
+	// the valid SARIF 2.1.0 log of one run asked of it, as when its
+	// processes are killed behind its launcher's back.
+	ErrNoSARIF = errors.New("opengrep exited 0 but wrote no SARIF")
 )
 
 // A SelectionError reports a Selection entry that is malformed, names an
@@ -53,8 +58,9 @@ func (e *SelectionError) Unwrap() error { return e.Err }
 // include 2 (fatal error), 4 (invalid pattern), 5 (invalid YAML), 7 (invalid
 // rule or missing config) and 8 (unknown language).
 type ExitError struct {
-	Code   int
-	Stderr []byte // the last 64 KiB of opengrep's stderr; nil from Cmd.Run
+	Code   int     // -1 when a signal ended opengrep
+	Stderr []byte  // the last 64 KiB of opengrep's stderr; nil from Cmd.Run
+	Result *Result // what opengrep wrote, when it is a valid SARIF log; nil from Cmd.Run
 }
 
 // Error returns "opengrep exited with code 7" and, if any, ": " and
@@ -70,6 +76,21 @@ func (e *ExitError) Error() string {
 
 // ExitCode returns e.Code.
 func (e *ExitError) ExitCode() int { return e.Code }
+
+// An OutputError reports that opengrep exited 0 without a usable SARIF log.
+type OutputError struct {
+	Err    error  // why the output is not a SARIF 2.1.0 log of one run
+	Stderr []byte // the last 64 KiB of opengrep's stderr
+}
+
+// Error returns ErrNoSARIF's text, ": " and Err's.
+func (e *OutputError) Error() string { return ErrNoSARIF.Error() + ": " + e.Err.Error() }
+
+// Unwrap returns e.Err.
+func (e *OutputError) Unwrap() error { return e.Err }
+
+// Is reports whether target is ErrNoSARIF.
+func (e *OutputError) Is(target error) bool { return target == ErrNoSARIF }
 
 // An IntegrityError reports an opengrep executable whose SHA-256 is not the
 // pinned one where gogrep requires it to be: Config.EmbeddedOpengrep, a

@@ -5,11 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
-	"slices"
 
-	"github.com/odipar/gogrep/internal/opengrep"
 	"github.com/odipar/gogrep/internal/rules"
 	"github.com/odipar/gogrep/internal/ruletest"
 )
@@ -65,19 +62,9 @@ func (e *Engine) TestExec(ctx context.Context) (string, ruletest.Exec, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	env := withRuntime(opengrep.UTF8Env(opengrep.HermeticEnv(e.env)), xdg)
 	run := func(ctx context.Context, dir string, args []string) (stdout, stderr []byte, code int, err error) {
-		if e.cacheErr != nil {
-			return nil, nil, 0, e.cacheErr
-		}
-		log, err := opengrep.LogFile(e.cacheDir)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		defer os.Remove(log)
 		var out, errb bytes.Buffer
-		c := &opengrep.Cmd{Path: args[0], Args: args[1:], Dir: dir, Env: append(slices.Clip(env), "SEMGREP_LOG_FILE="+log), Stdout: &out, Stderr: &errb}
-		err = c.Run(ctx)
+		err = e.runHermetic(ctx, args[0], xdg, dir, args[1:], &out, &errb)
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.Exited() {
 			return out.Bytes(), errb.Bytes(), exitErr.ExitCode(), nil

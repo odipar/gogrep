@@ -3,6 +3,7 @@
 package fakeopengrep
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,10 +22,12 @@ import (
 // It prints its args to stdout, one per line, or with --sarif a SARIF log
 // from tool "opengrep" whose run's properties hold them as args, its
 // working directory as dir, and the variables that $GOGREP_TEST_FAKE_ENV
-// names as env. The log goes to the files that -o/--output and
+// names as env, or the file $GOGREP_TEST_FAKE_SARIF names, such as a
+// recorded log. The log goes to the files that -o/--output and
 // --sarif-output name instead, mode 0o644, as opengrep writes them; with
-// $GOGREP_TEST_FAKE_NO_SARIF=1 it writes no log. It writes "fake stderr" to
-// stderr and exits with $GOGREP_TEST_FAKE_EXIT.
+// $GOGREP_TEST_FAKE_NO_SARIF=1 it writes no log. It writes
+// $GOGREP_TEST_FAKE_STDERR bytes of x and a newline, if set, and "fake
+// stderr" to stderr and exits with $GOGREP_TEST_FAKE_EXIT.
 //
 // Before that, it reports the variables that $GOGREP_TEST_FAKE_ENV, a
 // comma-separated list, names on stderr as NAME=value; with
@@ -84,6 +87,13 @@ func Main(args []string) int {
 				"properties": map[string]any{"args": args, "dir": dir, "env": env},
 			}},
 		})
+		if f := os.Getenv("GOGREP_TEST_FAKE_SARIF"); f != "" {
+			var err error
+			if log, err = os.ReadFile(f); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+		}
 		if toStdout {
 			fmt.Printf("%s\n", log)
 		}
@@ -92,6 +102,9 @@ func Main(args []string) int {
 				return 2
 			}
 		}
+	}
+	if n, err := strconv.Atoi(os.Getenv("GOGREP_TEST_FAKE_STDERR")); err == nil {
+		fmt.Fprintf(os.Stderr, "%s\n", bytes.Repeat([]byte("x"), n))
 	}
 	fmt.Fprintln(os.Stderr, "fake stderr")
 	code, _ := strconv.Atoi(os.Getenv("GOGREP_TEST_FAKE_EXIT"))
