@@ -238,7 +238,7 @@ Ids are compared exactly and case-sensitively. **There is no suffix matching.** 
 |---|---|
 | exactly one | That rule is tested. |
 | two or more | `RULE`: `rule reference "<R>" is ambiguous: <id1>, <id2>; write the full id` |
-| none | `RULE`: `rule reference "<R>" matches no rule`, then `; did you mean <id>, …?` listing up to five rules whose id ends in `.<R>` (case-insensitive, sorted), then `; list candidates with: gogrep rules --rule '/<R>/'`. When the build has no bundled sets, `; this gogrep build has no bundled rule sets` is added. |
+| none | `RULE`: `rule reference "<R>" matches no rule`, then `; did you mean <id>, …?` listing up to five rules whose id ends in `.<R>` (case-insensitive, sorted), then `; list candidates with: gogrep rules --rule '/<R>/'`. When the build has no bundled sets (no loaded rule outside `project` and `gogrep`), `; this gogrep build has no bundled rule sets` is added. |
 
 Examples, given the project rules `project.go.no-exec-command`, `project.go.net.dial` and `project.net.dial`:
 
@@ -461,7 +461,7 @@ Executing 4 tests.
 -| a.go:6:2:6:24 | Avoid running cmd with exec.Command |
 +| a.go:6:2:6:30 | Avoid running cmd with exec.Command |
 [3/4] FAILED(RULE) opengrep/gogrep/rules/test/db/raw-sql
-  rule reference "no-raw-sq" matches no rule; did you mean project.db.no-raw-sql?; list candidates with: gogrep rules --rule '/no-raw-sq/'
+  rule reference "no-raw-sql" matches no rule; did you mean project.sql.no-raw-sql?; list candidates with: gogrep rules --rule '/no-raw-sql/'
 [4/4] LEARNED opengrep/gogrep/rules/test/yaml/privileged
 --- expected
 +++ actual
