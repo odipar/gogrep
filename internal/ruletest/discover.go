@@ -39,9 +39,10 @@ type Fixture struct {
 // sorted by name. A path selects the fixtures below it and the fixture that
 // contains it; no paths select every fixture. A directory outside every
 // fixture that has an expected.txt or actual.txt is returned as a fixture
-// that fails at SETUP, and so is a fixture that breaks a rule of the design's
-// §2.3. It is an error when root is not a directory, when a path does not
-// exist or lies outside root, or when there are no fixtures.
+// that fails at SETUP, and so are a symlink outside every fixture, which
+// would hide the fixtures it leads to, and a fixture that breaks a rule of
+// the design's §2.3. It is an error when root is not a directory, when a
+// path does not exist or lies outside root, or when there are no fixtures.
 func Discover(root string, paths []string) ([]*Fixture, error) {
 	t := &tree{root: root, name: path.Clean(filepath.ToSlash(root)), entries: map[string]fs.DirEntry{}}
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
@@ -99,6 +100,19 @@ func Discover(root string, paths []string) ([]*Fixture, error) {
 				Setup: fmt.Errorf("%s has no %s next to it", name, refFile),
 			})
 		}
+	}
+	// The walk does not follow symlinks, so the fixtures behind a symlinked
+	// fixture or namespace directory would silently not run.
+	for _, p := range t.paths {
+		if t.entries[p].Type()&fs.ModeSymlink == 0 || !pick(p) ||
+			slices.ContainsFunc(t.fixtures, func(dir string) bool { return within(p, dir) }) {
+			continue
+		}
+		out = append(out, &Fixture{
+			Name:  t.display(p),
+			Dir:   filepath.Join(root, filepath.FromSlash(p)),
+			Setup: fmt.Errorf("symlinks are not supported in the test root: %s", p),
+		})
 	}
 	if len(out) == 0 {
 		under := t.name

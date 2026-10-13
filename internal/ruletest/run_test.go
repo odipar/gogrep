@@ -359,6 +359,29 @@ func TestRunShowOutput(t *testing.T) {
 	}
 }
 
+// A fixture directory that is a symlink fails at SETUP, and gogrep never
+// removes files through it.
+func TestRunSymlinkedFixture(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	writeTree(t, target, map[string]string{"actual.txt": "kept\n", "actual.sarif": "kept"})
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("cannot create symlinks: %v", err)
+	}
+	r := newFakeRunner()
+	test := &Test{Fixture: &Fixture{Name: "test/link", Dir: link, Setup: errors.New("symlinks are not supported in the test root: link")}}
+	const want = "Executing 1 tests.\n[1/1] FAILED(SETUP) test/link\n  symlinks are not supported in the test root: link\n0 tests passed; 1 tests failed:\n  FAILED: test/link\n"
+	if code, stdout, stderr := r.run(context.Background(), []*Test{test}); code != 1 || stdout != want || stderr != "" {
+		t.Errorf("Run = %d, stderr %q, stdout\n%s\nwant 1, no stderr, stdout\n%s", code, stderr, stdout, want)
+	}
+	for name, want := range map[string]string{"actual.txt": "kept\n", "actual.sarif": "kept"} {
+		if data, err := os.ReadFile(filepath.Join(target, name)); string(data) != want {
+			t.Errorf("%s = %q, %v; want %q", name, data, err, want)
+		}
+	}
+}
+
 func TestCommandLine(t *testing.T) {
 	got := commandLine([]string{"/bin/opengrep", "scan", "--config=/a b/c.yaml", "--", "./x-y_z.go", "./it's.go", "", `.\a.go`, "./h€.go"})
 	want := `/bin/opengrep scan '--config=/a b/c.yaml' -- ./x-y_z.go './it'\''s.go' '' '.\a.go' './h€.go'`

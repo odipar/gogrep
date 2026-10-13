@@ -40,8 +40,13 @@ func replaceFile(file string, data []byte) error {
 }
 
 // removeFile removes the file name from the fixture f, if it is there. It
-// leaves a directory of that name alone, which discovery reports.
+// leaves a directory of that name alone, which discovery reports, and never
+// reaches through a fixture directory that is a symlink, which discovery
+// reports too.
 func removeFile(f *Fixture, name string) error {
+	if fi, err := os.Lstat(f.Dir); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+		return nil
+	}
 	file := filepath.Join(f.Dir, name)
 	if fi, err := os.Lstat(file); err == nil && fi.IsDir() {
 		return nil

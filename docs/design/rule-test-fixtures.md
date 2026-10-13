@@ -75,6 +75,8 @@ A fixture reports the first check it fails, in this order. Discovery parses `rul
 
 **Orphans.** A directory outside every fixture that contains `expected.txt` or `actual.txt` but no `rule.ref` is reported as its own test and fails at `SETUP` with `expected.txt has no rule.ref next to it` (`actual.txt has …` when only that is there). This catches a lost or renamed reference.
 
+**Symlinks outside fixtures.** Discovery does not follow symlinks, so a symlinked fixture or namespace directory would silently hide the fixtures behind it. Every symlink under the test root that lies outside every fixture is therefore reported as its own test and fails at `SETUP` with `symlinks are not supported in the test root: <path>`, where `<path>` is relative to the test root. A path argument through it (§5.2) selects that test. gogrep never removes files through it. On Windows with `core.symlinks=false`, git checks the link out as a small text file, which lies outside every fixture and is ignored like `go.mod`.
+
 A missing `expected.txt` is **not** a `SETUP` failure. It fails at `RESULT` with `Cannot find expected.txt.`, followed by the diff against an empty file. `actual.txt` is written, as in CodeQL.
 
 ### 2.4 Worked example
@@ -675,7 +677,7 @@ There are no `_test.go` files today. All new tests use the standard `testing` pa
 - `ruletest/diff`: insert, delete, change, merged context, empty sides and hunk headers.
 - `ruletest/discover`:
   - depth-1 `rule.ref`, nested fixtures, orphan `expected.txt`, unknown `expected*` files;
-  - symlinks (skipped where they cannot be created), OS junk, hidden-file samples, `.gogrep-*.tmp`;
+  - symlinks among the samples and symlinked fixture and namespace directories (skipped where they cannot be created), OS junk, hidden-file samples, `.gogrep-*.tmp`;
   - no samples, the argument-length guard, and path arguments (directory, file, outside the root).
 - `ruletest/run`, using a fake `Exec`:
   - output order is independent of `-j`;

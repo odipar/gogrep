@@ -138,6 +138,21 @@ func fixtureTree(t *testing.T) []summary {
 	} else {
 		want = append(want, summary{Name: root + "setup/symlink", Namespace: "setup", Setup: "symlinks are not supported in fixtures: b.go"})
 	}
+	// Discovery does not follow symlinks, so it reports a symlinked fixture
+	// or namespace directory rather than skip the fixtures behind it.
+	shared := filepath.Join(dir, "shared")
+	writeTree(t, shared, map[string]string{"fx/rule.ref": "x\n", "fx/a.go": "package a\n"})
+	for _, l := range []struct{ name, target string }{{"links/fx", filepath.Join(shared, "fx")}, {"linkns", shared}} {
+		p := filepath.Join(testRoot, filepath.FromSlash(l.name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(l.target, p); err != nil {
+			t.Logf("not testing symlinks: %v", err)
+			continue
+		}
+		want = append(want, summary{Name: root + l.name, Setup: "symlinks are not supported in the test root: " + l.name})
+	}
 	if runtime.GOOS != "windows" {
 		writeTree(t, testRoot, map[string]string{"setup/socket/rule.ref": "x\n", "setup/socket/a.go": "package a\n"})
 		l, err := net.Listen("unix", filepath.Join(testRoot, "setup", "socket", "sock"))
@@ -212,12 +227,13 @@ func TestDiscoverPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := "opengrep/gogrep/rules/test"
-	tests := []struct {
+	type pathsTest struct {
 		name  string
 		paths []string
 		want  []string // fixture names below the root
 		err   string
-	}{
+	}
+	tests := []pathsTest{
 		{"test root", []string{root}, all, ""},
 		{"test root with a slash", []string{root + "/"}, all, ""},
 		{"namespace", []string{root + "/go"}, []string{"go/exec-command", "go/net/dial-basic"}, ""},
@@ -235,6 +251,12 @@ func TestDiscoverPaths(t *testing.T) {
 		{"absolute outside", []string{filepath.Dir(abs) + "/../../../../x"}, nil, filepath.Dir(abs) + "/../../../../x is not under opengrep/gogrep/rules/test"},
 		{"missing", []string{root + "/go/nope"}, nil, root + "/go/nope does not exist"},
 		{"no fixture", []string{root + "/go.mod", root + "/.gitattributes"}, nil, "no tests found under " + root + "/go.mod, " + root + "/.gitattributes"},
+	}
+	if slices.Contains(all, "linkns") {
+		tests = append(tests,
+			pathsTest{"symlinked fixture", []string{root + "/links/fx"}, []string{"links/fx"}, ""},
+			pathsTest{"through a symlinked namespace", []string{root + "/linkns/fx/a.go"}, []string{"linkns"}, ""},
+		)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

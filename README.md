@@ -353,7 +353,7 @@ diagnostics
 
 | Stage | Meaning |
 |---|---|
-| `SETUP` | The fixture is malformed, e.g. it has no samples, its `rule.ref` is empty, or it has a misspelt `expected.text`. |
+| `SETUP` | The fixture is malformed, e.g. it has no samples, its `rule.ref` is empty, or it has a misspelt `expected.text`. gogrep does not follow symlinks, so a symlink anywhere under `opengrep/gogrep/rules/test/` fails at `SETUP` too. |
 | `RULE` | `rule.ref` matches no rule or several, or opengrep rejects the rule. |
 | `RUN` | opengrep failed, or its output cannot be trusted. |
 | `RESULT` | `expected.txt` is missing or differs. |
