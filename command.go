@@ -92,7 +92,7 @@ func (e *Engine) Command(ctx context.Context, dir string, opts *CommandOptions, 
 		Path:       info.Path,
 		Args:       append([]string{info.Path}, args...),
 		Dir:        dir,
-		Env:        withRuntime(opengrep.UTF8Env(e.env), xdg),
+		Env:        slices.Clone(withRuntime(opengrep.UTF8Env(e.env), xdg)), // the caller's to change, never the Engine's
 		ctx:        ctx,
 		foreground: opts.Foreground,
 		log:        e.log,

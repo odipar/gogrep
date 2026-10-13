@@ -195,6 +195,42 @@ func TestCommandSelection(t *testing.T) {
 	}
 }
 
+// Each Cmd's Env is its own: changing it, in place or by appending, changes
+// no other Cmd's, also when the Engine's environment needs no locale fix and
+// there is no runtime to point opengrep at.
+func TestCommandEnvIsCopied(t *testing.T) {
+	t.Parallel()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	notDir := filepath.Join(t.TempDir(), "file")
+	writeTree(t, filepath.Dir(notDir), map[string]string{"file": ""})
+	env := make([]string, 0, 10) // room to append in place
+	env = append(env, "GOGREP_TEST_FAKE_OPENGREP=1", "LANG=en_US.UTF-8", "HOME=/home/real")
+	e := newEngine(t, Config{Opengrep: exe, Env: env, CacheDir: notDir}) // so preparing the runtime fails
+	ctx, dir := context.Background(), t.TempDir()
+	c1, err := e.Command(ctx, dir, nil, "--version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, err := e.Command(ctx, dir, nil, "--version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := slices.Clone(c2.Env)
+	c1.Env[len(c1.Env)-1] = "HOME=/tmp/just-for-c1"
+	c1.Env = append(c1.Env, "FOR_C1=1")
+	c3, err := e.Command(ctx, dir, nil, "--version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2.Env = append(c2.Env, "FOR_C2=2")
+	if !slices.Equal(c3.Env, want) || c1.Env[len(c1.Env)-1] != "FOR_C1=1" {
+		t.Errorf("after changing one Cmd's Env, another's is %q and the first ends in %q; want %q and FOR_C1=1", c3.Env, c1.Env[len(c1.Env)-1], want)
+	}
+}
+
 // A done ctx kills the command, and Run returns ctx's error.
 func TestCommandCancelled(t *testing.T) {
 	t.Parallel()
