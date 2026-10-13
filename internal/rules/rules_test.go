@@ -2,6 +2,8 @@ package rules
 
 import (
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -73,6 +75,31 @@ func TestFromFSSkipDirs(t *testing.T) {
 	}
 }
 
+// A test root that is a symlink (to fixtures shared between projects) must be
+// skipped too, not read as a file.
+func TestFromFSSkipsSymlinkedDir(t *testing.T) {
+	dir := t.TempDir()
+	shared := t.TempDir()
+	if err := os.WriteFile(filepath.Join(shared, "x.yaml"), []byte("rules: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "go"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go", "a.yaml"), rule("a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shared, filepath.Join(dir, "test")); err != nil {
+		t.Skipf("cannot create symlinks: %v", err)
+	}
+	set, err := FromFS(os.DirFS(dir), "test")
+	if err != nil {
+		t.Fatalf("FromFS: %v", err)
+	}
+	if got, want := slices.Sorted(maps.Keys(set)), []string{"go/a.yaml"}; !slices.Equal(got, want) {
+		t.Errorf("FromFS paths = %q, want %q", got, want)
+	}
+}
 func TestParseIDs(t *testing.T) {
 	sets := map[string]Set{
 		"project": {
