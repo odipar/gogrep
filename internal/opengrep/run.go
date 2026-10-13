@@ -36,8 +36,9 @@ type Cmd struct {
 
 	// Foreground keeps the process in the caller's process group, so that a
 	// terminal's Ctrl-C reaches it, and makes a done ctx kill it alone.
-	// Otherwise it leads a process group of its own (on Windows, a done ctx
-	// kills its process tree), which a done ctx kills whole: opengrep's
+	// Otherwise it leads a process group of its own, which a done ctx
+	// interrupts whole, as a terminal's Ctrl-C would, and kills killGrace
+	// later (on Windows, a done ctx kills its process tree): opengrep's
 	// launcher does not pass a kill on to opengrep-cli and opengrep-core,
 	// which would scan on.
 	Foreground bool
@@ -47,10 +48,11 @@ type Cmd struct {
 
 // Run starts c and waits for it. It returns nil when the process exits 0, an
 // *exec.ExitError when it exits non-zero, a *StartError when it cannot
-// start, and ctx.Err() when ctx is done before Run returns: a process killed on Windows exits with code 1, so once
-// ctx is done no exit status is trusted. When ctx is done, Run kills the
-// process as Foreground describes and returns within about a second. A Cmd
-// may be run again.
+// start, and ctx.Err() when ctx is done before Run returns: a process killed
+// on Windows exits with code 1, and an interrupted opengrep may exit 0, so
+// once ctx is done no exit status is trusted. When ctx is done, Run stops
+// the process as Foreground describes and returns within about a second,
+// once every process of its group is gone. A Cmd may be run again.
 func (c *Cmd) Run(ctx context.Context) error {
 	start := c.start
 	if start == nil {
@@ -60,11 +62,12 @@ func (c *Cmd) Run(ctx context.Context) error {
 	for retry := 0; ; retry++ {
 		// An exec.Cmd cannot be started twice. Nothing has read Stdin yet:
 		// Start copies it only once the process exists.
-		cmd := c.command(ctx)
+		cmd, reap := c.command(ctx)
 		err := start(cmd)
 		if err == nil {
 			err = cmd.Wait()
 			if ctx.Err() != nil {
+				reap()
 				return ctx.Err()
 			}
 			return err
@@ -86,16 +89,17 @@ func (c *Cmd) Run(ctx context.Context) error {
 	}
 }
 
-// command returns an exec.Cmd that runs c under ctx.
-func (c *Cmd) command(ctx context.Context) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, c.Path, c.Args...)
+// command returns an exec.Cmd that runs c under ctx, and what to call once
+// it was cancelled and Wait returned (see killTree).
+func (c *Cmd) command(ctx context.Context) (cmd *exec.Cmd, reap func()) {
+	cmd = exec.CommandContext(ctx, c.Path, c.Args...)
 	cmd.Dir, cmd.Env = c.Dir, c.Env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = c.Stdin, c.Stdout, c.Stderr
 	cmd.WaitDelay = waitDelay
-	if !c.Foreground {
-		killTree(cmd)
+	if c.Foreground {
+		return cmd, func() {}
 	}
-	return cmd
+	return cmd, killTree(cmd)
 }
 
 // A StartError reports that a Cmd's process could not start.

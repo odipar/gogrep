@@ -131,3 +131,51 @@ func TestRunRetriesTextBusy(t *testing.T) {
 		}
 	})
 }
+
+// Cancelling interrupts the process group first, as a terminal's Ctrl-C
+// would, so that opengrep can clean up, and kills it killGrace later if it
+// is still there.
+func TestRunInterruptsFirst(t *testing.T) {
+	t.Parallel()
+	for _, ignore := range []bool{false, true} {
+		t.Run("ignoring SIGINT "+strconv.FormatBool(ignore), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			ready, interrupted := filepath.Join(dir, "ready"), filepath.Join(dir, "interrupted")
+			// Built with -race, the helper would wait a second as it exits.
+			c := helperCmd(t, "trap", "GOGREP_TEST_READY="+ready, "GOGREP_TEST_INTERRUPTED="+interrupted, "GORACE=atexit_sleep_ms=0")
+			if ignore {
+				c.Env = append(c.Env, "GOGREP_TEST_IGNORE=1")
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := runAsync(ctx, c)
+			for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+				if _, err := os.Stat(ready); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("the helper never got ready")
+				}
+			}
+			cancel()
+			start := time.Now()
+			var err error
+			select {
+			case err = <-done:
+			case <-time.After(waitDelay + 10*time.Second):
+				t.Fatal("Run, cancelled, does not return")
+			}
+			took := time.Since(start)
+			_, statErr := os.Stat(interrupted)
+			switch {
+			case !errors.Is(err, context.Canceled):
+				t.Errorf("Run, cancelled = %v, want context.Canceled", err)
+			case !ignore && (statErr != nil || took >= killGrace):
+				t.Errorf("Run returned after %v, interrupted: %v; want the helper interrupted, and Run back before %v", took, statErr, killGrace)
+			case ignore && (statErr == nil || took < killGrace || took > waitDelay+time.Second):
+				t.Errorf("Run returned after %v, interrupted: %v; want the helper killed after %v", took, statErr == nil, killGrace)
+			}
+		})
+	}
+}

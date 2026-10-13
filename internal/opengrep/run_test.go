@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -35,6 +36,9 @@ func TestMain(m *testing.M) {
 //     own pid and the child's to $GOGREP_TEST_PIDS, and sleeps;
 //   - orphan does as tree, but exits at once;
 //   - sleep sleeps for a minute;
+//   - trap catches SIGINT, or ignores it with $GOGREP_TEST_IGNORE=1,
+//     creates $GOGREP_TEST_READY and sleeps; a caught SIGINT makes it
+//     create $GOGREP_TEST_INTERRUPTED and exit 0;
 //   - unpack is opengrep's first run, which unpack describes;
 //   - prepare calls PrepareRuntime with its arguments, the executable, its
 //     SHA-256 and the cache directory, and prints the result;
@@ -82,6 +86,22 @@ func helper(mode string, args []string) int {
 		fallthrough
 	case "sleep":
 		time.Sleep(time.Minute)
+		return 0
+	case "trap":
+		caught := make(chan os.Signal, 1)
+		if os.Getenv("GOGREP_TEST_IGNORE") == "1" {
+			signal.Ignore(os.Interrupt)
+		} else {
+			signal.Notify(caught, os.Interrupt)
+		}
+		if os.WriteFile(os.Getenv("GOGREP_TEST_READY"), nil, 0o600) != nil {
+			return 2
+		}
+		select {
+		case <-caught:
+			os.WriteFile(os.Getenv("GOGREP_TEST_INTERRUPTED"), nil, 0o600)
+		case <-time.After(time.Minute):
+		}
 		return 0
 	}
 	return 2

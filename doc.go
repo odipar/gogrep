@@ -158,11 +158,13 @@
 //
 // opengrep runs in a process group of its own (on Windows, as a process tree
 // that taskkill ends), so a terminal's Ctrl-C reaches only the host program.
-// The package installs no signal handlers: a program that wants Ctrl-C to
-// stop its scans cancels the context itself, for example with
-// signal.NotifyContext. A host that dies without cancelling, from SIGKILL
-// or a signal it does not handle, leaves its opengrep processes to finish
-// their scans.
+// A done context sends that group SIGINT, as Ctrl-C would, so that opengrep
+// can show the terminal's cursor again and remove its temporary files, and
+// SIGKILL a second later. The package installs no signal handlers: a
+// program that wants Ctrl-C to stop its scans cancels the context itself,
+// for example with signal.NotifyContext. A host that dies without
+// cancelling, from SIGKILL or a signal it does not handle, leaves its
+// opengrep processes to finish their scans.
 //
 // # Files
 //

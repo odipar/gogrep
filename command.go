@@ -35,9 +35,10 @@ type CommandOptions struct {
 	// Foreground keeps opengrep in the caller's process group, so a
 	// terminal's Ctrl-C reaches it directly, and makes a done ctx kill only
 	// the process Run started. Otherwise opengrep leads a process group of
-	// its own (on Windows, its process tree), which a done ctx kills whole;
-	// such a group is stopped if it reads the terminal, so do not give it a
-	// terminal as Stdin.
+	// its own (on Windows, its process tree), which a done ctx stops whole:
+	// with SIGINT, as Ctrl-C would, and SIGKILL a second later (on Windows,
+	// at once). Such a group is stopped if it reads the terminal, so do not
+	// give it a terminal as Stdin.
 	Foreground bool
 }
 

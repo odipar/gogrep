@@ -326,7 +326,7 @@ Every other behaviour, including all golden files and the injected argv apart fr
    - The hint `; this gogrep build has no bundled rule sets` (`internal/ruletest/ref.go:95`) and the error `this gogrep build has no bundled rules` can no longer occur.
 4. **Interrupting `gogrep scan`.**
    - **Before:** opengrep shared gogrep's process group while gogrep ignored SIGINT and SIGTERM (`run.go:115`). An interrupted scan exited 0 with no SARIF and no message (reproduced twice).
-   - **Now:** opengrep runs in a process group of its own, as it already does under `gogrep test`. SIGINT and SIGTERM (plus SIGHUP and SIGQUIT on Unix) make gogrep kill the tree, print `gogrep: interrupted` and exit 130.
+   - **Now:** opengrep runs in a process group of its own, as it already does under `gogrep test`. SIGINT and SIGTERM (plus SIGHUP and SIGQUIT on Unix) make gogrep stop the tree, print `gogrep: interrupted` and exit 130. On Unix opengrep's group gets SIGINT, as Ctrl-C used to reach it, and SIGKILL a second later, so that opengrep still shows the cursor its progress bar hid and removes its temporary files (§3.4).
    - **Stdin:** opengrep's stdin is the null device when gogrep's stdin is a terminal, because a background process group that reads the terminal is stopped by SIGTTIN. Pipes and files are still passed on. The check is for a character device (`os.ModeCharDevice`), which the standard library tells without per-OS ioctls; the null device is one too and reads the same, so only an unusual stdin such as `/dev/zero` also becomes the null device.
    - **Known limit:** under `stty tostop`, a background group that writes to the terminal is stopped as well. Ctrl-C still ends the scan.
 5. **Exit 0 without SARIF is now an error.** A forwarded command that asked for SARIF and exited 0 without a valid SARIF 2.1.0 log (to stdout, or in an `-o`/`--sarif-output` file) exits 2 with `gogrep: opengrep exited 0 but wrote no SARIF`. Before, gogrep exited 0.
@@ -808,9 +808,10 @@ type CommandOptions struct {
 	// Foreground keeps opengrep in the caller's process group, so a
 	// terminal's Ctrl-C reaches it directly, and makes a done ctx kill only
 	// the process Run started. Otherwise opengrep leads a process group of
-	// its own (on Windows, its process tree), which a done ctx kills whole;
-	// such a group is stopped if it reads the terminal, so do not give it a
-	// terminal as Stdin.
+	// its own (on Windows, its process tree), which a done ctx stops whole:
+	// with SIGINT, as Ctrl-C would, and SIGKILL a second later (on Windows,
+	// at once). Such a group is stopped if it reads the terminal, so do not
+	// give it a terminal as Stdin.
 	Foreground bool
 }
 
@@ -1069,7 +1070,7 @@ These go into the package documentation.
 ### 3.4 Context and cancellation
 
 - **Every opengrep process runs under `exec.CommandContext`.**
-  - **Unix:** `Setpgid`, and `Cancel` sends SIGKILL to the whole group. opengrep's launcher does not pass a kill on to `opengrep-cli` and `opengrep-core` (`procgroup_unix.go`).
+  - **Unix:** `Setpgid`, and `Cancel` sends SIGINT to the whole group, as a terminal's Ctrl-C would, then SIGKILL 1 s later. On SIGINT, opengrep shows the cursor its progress bar hid and removes its temporary files (about 3 MB in `$TMPDIR` per scan), within about 0.4 s once it scans, or 2.5–4.4 s while it still loads rules, when the SIGKILL ends it first (measured). An immediate SIGKILL left an interrupted `gogrep scan`'s terminal without a cursor and leaked the temporaries of every cancelled scan. `Run` returns once the whole group is gone, as it may outlive its leader. opengrep's launcher does not pass a kill on to `opengrep-cli` and `opengrep-core` (`procgroup_unix.go`).
   - **Windows:** `taskkill /T /F /PID`, falling back to `Process.Kill`.
   - **`Foreground`:** the process stays in the caller's group, and only it is killed.
   - `WaitDelay` is 1 s, so a grandchild that holds a pipe open cannot block the return.
