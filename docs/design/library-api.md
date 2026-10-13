@@ -1064,7 +1064,7 @@ func (e *IntegrityError) Error() string // "<path>: SHA-256 <got>, want the pinn
 - **Boolean fields name the non-default behaviour:** `NoProjectRules`, `ReadOnly`, `Foreground`, `AllowUnpinned`.
 - **Return types are concrete.** There are no exported interfaces and no third-party types.
 - **No positional parameter will ever be added.** This avoids gosec's breaking changes to `NewAnalyzer`.
-- **`Rules` and `Suites` take no context:** they never run opengrep, and their file work is bounded.
+- **`Rules` and `Suites` take no context:** they never run opengrep, and their file work is bounded, apart from reading project rules that a repository can point anywhere (§3.6), which `NoProjectRules` turns off.
 - **No mutable package-level state is exported.**
 
 ### 3.3 Concurrency guarantees
@@ -1160,7 +1160,8 @@ The package documentation's section "Untrusted repositories" is this table:
 | What the repository controls | Effect | Control |
 |---|---|---|
 | `opengrep/gogrep/rules/` | Adds rules that run. opengrep rules are patterns and cannot run code, but they can add noise or cost CPU (`pattern-regex`). | `NoProjectRules`; `RuleTimeout`, `MaxMemoryMB` and a ctx deadline bound the cost |
-| A project rule file that is a symlink | Project files are read with `os.DirFS`, which follows a symlinked file (`fs.WalkDir` never enters a symlinked directory: `TestFromFSSkipsSymlinkedDir`). A repository can therefore make gogrep read a file outside it as rule YAML, and that file's content may appear in parse errors. The CLI relies on this so that projects can share rules. | `NoProjectRules` |
+| A project rule file that is a symlink | Project files are read with `os.DirFS`, which follows a symlinked file. A repository can therefore make gogrep read a file outside it as rule YAML, and that file's content may appear in parse errors. The CLI relies on this so that projects can share rules. Below the rules directory, gogrep enters no symlinked directory (`fs.WalkDir` does not; `rules.FromFS` skips one, which it used to fail on) and reads no device or pipe, such as a link to `/dev/zero` (`TestFromFSSkipsSymlinkedDir`). | `NoProjectRules` |
+| `opengrep/gogrep/rules`, `opengrep/gogrep` or `opengrep` that is a symlink | `os.Stat` and `os.DirFS` follow it, so the repository can make gogrep walk any directory tree, read every regular file in it whole and load the rule YAML among them (verified with a link to the module cache: 3.9 s). This is v0.3.0's behaviour, and a project may share its rules directory this way. Reading happens before opengrep runs, and neither a ctx deadline nor `RuleTimeout` or `MaxMemoryMB` bounds it. | `NoProjectRules` |
 | `opengrep/gogrep/suites/` | A project `code-scanning.yaml` replaces the default suite and can select nothing | `NoProjectRules` |
 | `opengrep/gogrep/rules/test/` | Excluded from scans by the injected `--exclude` | Under `NoProjectRules` it is scanned like any other directory |
 | `nosemgrep` comments | Mark matches as suppressed | They stay in `Findings` with `Suppressed: true`; the caller decides |

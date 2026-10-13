@@ -114,10 +114,14 @@
 //     and run no code, but they can add noise or cost CPU (pattern-regex).
 //     NoProjectRules ignores them; RuleTimeout, MaxMemoryMB and a ctx
 //     deadline bound the cost.
-//   - A project rule file may be a symlink, which gogrep follows (it never
-//     enters a symlinked directory), so a repository can make gogrep read a
-//     file outside it as rule YAML, and parse errors may quote it.
-//     NoProjectRules ignores them.
+//   - Symlinks: a project rule file may be one, which gogrep follows, and
+//     so may opengrep/gogrep/rules itself, opengrep or opengrep/gogrep. So
+//     a repository can make gogrep read any file outside it as rule YAML,
+//     and parse errors may quote it, or walk any directory tree and read
+//     every regular file in it. gogrep enters no symlinked directory below
+//     the rules directory, and reads no device or pipe. Project rule files
+//     are read whole before opengrep runs, which neither a ctx deadline nor
+//     RuleTimeout and MaxMemoryMB bound. NoProjectRules ignores them.
 //   - opengrep/gogrep/suites can replace the default suite with one that
 //     selects nothing. NoProjectRules ignores them.
 //   - opengrep/gogrep/rules/test is left out of scans that run gogrep's
@@ -163,7 +167,9 @@
 // return an error for which errors.Is(err, context.Canceled) (or
 // context.DeadlineExceeded) holds; Test also returns the tests reported so
 // far. Waits for locks, downloads and runtime preparation stop with the
-// context too. A deadline therefore bounds a call.
+// context too. A deadline therefore bounds a call, except for the reading
+// of project rule files that a repository controls (see "Untrusted
+// repositories").
 //
 // opengrep runs in a process group of its own (on Windows, as a process tree
 // that taskkill ends), so a terminal's Ctrl-C reaches only the host program.

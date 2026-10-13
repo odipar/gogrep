@@ -51,10 +51,13 @@ func FromTarGz(data []byte) (Set, error) {
 	}
 }
 
-// FromFS reads every file in fsys, except those under the directories whose
-// slash-separated paths are in skipDirs, in any letter case: on a
-// case-insensitive file system a Test directory is the test directory. A
-// skipped directory may also be a symlink, which WalkDir reports as a file.
+// FromFS reads every regular file in fsys, a symlink to one included,
+// except those under the directories whose slash-separated paths are in
+// skipDirs, in any letter case: on a case-insensitive file system a Test
+// directory is the test directory. A skipped directory may also be a
+// symlink, which WalkDir reports as a file. Like WalkDir, FromFS enters no
+// symlinked directory, and it reads no device or pipe, which could be
+// endless.
 func FromFS(fsys fs.FS, skipDirs ...string) (Set, error) {
 	set := Set{}
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
@@ -66,6 +69,15 @@ func FromFS(fsys fs.FS, skipDirs ...string) (Set, error) {
 			return fs.SkipDir
 		case skip, d.IsDir():
 			return nil
+		}
+		if !d.Type().IsRegular() {
+			fi, err := fs.Stat(fsys, p) // through a symlink
+			if err != nil {
+				return err
+			}
+			if !fi.Mode().IsRegular() {
+				return nil
+			}
 		}
 		set[p], err = fs.ReadFile(fsys, p)
 		return err

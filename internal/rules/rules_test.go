@@ -82,7 +82,9 @@ func TestFromFSSkipDirs(t *testing.T) {
 }
 
 // A test root that is a symlink (to fixtures shared between projects) must be
-// skipped too, not read as a file.
+// skipped too, not read as a file. So are other symlinked directories, which
+// WalkDir does not enter, and devices, which could be endless; a symlinked
+// file is read.
 func TestFromFSSkipsSymlinkedDir(t *testing.T) {
 	dir := t.TempDir()
 	shared := t.TempDir()
@@ -98,11 +100,20 @@ func TestFromFSSkipsSymlinkedDir(t *testing.T) {
 	if err := os.Symlink(shared, filepath.Join(dir, "test")); err != nil {
 		t.Skipf("cannot create symlinks: %v", err)
 	}
+	links := map[string]string{"go/shared": shared, "go/linked.yaml": filepath.Join(shared, "x.yaml")}
+	if runtime.GOOS != "windows" {
+		links["go/zero.yaml"] = "/dev/zero"
+	}
+	for name, target := range links {
+		if err := os.Symlink(target, filepath.Join(dir, filepath.FromSlash(name))); err != nil {
+			t.Fatal(err)
+		}
+	}
 	set, err := FromFS(os.DirFS(dir), "test")
 	if err != nil {
 		t.Fatalf("FromFS: %v", err)
 	}
-	if got, want := slices.Sorted(maps.Keys(set)), []string{"go/a.yaml"}; !slices.Equal(got, want) {
+	if got, want := slices.Sorted(maps.Keys(set)), []string{"go/a.yaml", "go/linked.yaml"}; !slices.Equal(got, want) {
 		t.Errorf("FromFS paths = %q, want %q", got, want)
 	}
 }
