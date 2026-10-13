@@ -491,9 +491,10 @@ func TestRunLearnErrors(t *testing.T) {
 	r := newFakeRunner()
 	r.Learn = true
 	dir := t.TempDir()
+	// Both have the actual.txt of an earlier run.
 	tests := []*Test{
-		r.addTest(t, dir, "a", fixtureSpec{files: map[string]string{"expected.txt": "| a.go:1:1:1:2 | old |\n"}, out: results("new")}),
-		r.addTest(t, dir, "b", fixtureSpec{files: map[string]string{"expected.txt": "| a.go:1:1:1:2 | m |\n"}, out: results("m")}),
+		r.addTest(t, dir, "a", fixtureSpec{files: map[string]string{"expected.txt": "| a.go:1:1:1:2 | old |\n", "actual.txt": "stale\n"}, out: results("new")}),
+		r.addTest(t, dir, "b", fixtureSpec{files: map[string]string{"expected.txt": "| a.go:1:1:1:2 | m |\n", "actual.txt": "stale\n"}, out: results("m")}),
 	}
 	expected := filepath.Join(tests[1].Dir, expectedFile)
 	for _, chmod := range []struct {
@@ -519,9 +520,14 @@ func TestRunLearnErrors(t *testing.T) {
   FAILED: test/b
 `
 	code, stdout, stderr := r.run(context.Background(), tests)
-	if code != 2 || stdout != want || !strings.HasPrefix(stderr, "gogrep: writing test/a/expected.txt: ") || strings.Count(stderr, "\n") != 1 {
-		t.Errorf("Run --learn = %d, stderr %q, stdout\n%s\nwant 2, an error writing test/a/expected.txt, stdout\n%s", code, stderr, stdout, want)
+	errs := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
+	if code != 2 || stdout != want || len(errs) != 2 ||
+		!strings.HasPrefix(errs[0], "gogrep: writing test/a/expected.txt: ") || !strings.HasPrefix(errs[1], "gogrep: writing test/a/actual.txt: ") {
+		t.Errorf("Run --learn = %d, stderr %q, stdout\n%s\nwant 2, errors writing test/a/expected.txt and actual.txt, stdout\n%s", code, stderr, stdout, want)
 	}
+	// accept must not make the results of the earlier run expected: b's
+	// actual.txt holds this run's.
+	checkFile(t, tests[1], actualFile, "| a.go:1:1:1:2 | m |\n")
 }
 
 func TestAccept(t *testing.T) {

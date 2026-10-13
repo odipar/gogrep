@@ -417,7 +417,7 @@ gogrep test accept [path...]
 
 | Flag | Meaning |
 |---|---|
-| `--learn` | For a `RESULT` failure (including a missing `expected.txt`), write the actual output to `expected.txt`, delete `actual.txt`, and report `LEARNED` followed by the diff, so the change shows in CI logs. Learned tests count as passed. Failures at other stages still fail. |
+| `--learn` | For a `RESULT` failure (including a missing `expected.txt`), write the actual output to `expected.txt`, delete `actual.txt`, and report `LEARNED` followed by the diff, so the change shows in CI logs. Learned tests count as passed. Failures at other stages still fail. When `expected.txt` cannot be read or written, the test still fails at `RESULT` and writes `actual.txt`, as without `--learn`, so `accept` never promotes an earlier run's output in its place. |
 | `-j N`, `--threads N` (also `=N`) | Number of opengrep processes at once. The default and `0` both mean `runtime.NumCPU()`. `-N` means NumCPU − N, at least 1. Each process peaks at about 265 MB RSS (measured), so small CI runners can pass `-j 2`. |
 | `--keep-sarif` | Write each fixture's raw opengrep stdout to `<fixture>/actual.sarif`, not rebranded, mode 0o600. This is the counterpart of CodeQL's `--keep-databases`. Without the flag, a stale `actual.sarif` is deleted. |
 | `--show-opengrep-output` | After each fixture's report, print its opengrep command line (`  $ <opengrep binary> scan …`, quoted for a POSIX shell) and its captured stderr, each line prefixed with `  > `, without blank lines at the start or end. Output is buffered per fixture, so parallel runs never interleave. CodeQL warns that its own equivalent interleaves. |
@@ -579,7 +579,7 @@ In descriptions, each line of stderr is prefixed with `> `, blank lines at the s
 
 | File | When | How |
 |---|---|---|
-| `actual.txt` | The fixture fails at `RESULT` without `--learn`. | Written atomically, 0o600. |
+| `actual.txt` | The fixture fails at `RESULT`: without `--learn`, or with `--learn` when `expected.txt` could not be read or written. | Written atomically, 0o600. |
 | `actual.txt` (stale) | Deleted whenever the fixture does **not** fail at `RESULT` (passed, learned, `SETUP`, `RULE`, `RUN`), so `accept` can never promote stale output. | — |
 | `expected.txt` | Written by `--learn` for a `RESULT` failure, or renamed from `actual.txt` by `accept`. | Atomic write or rename, then 0o600. |
 | `actual.sarif` | Written with `--keep-sarif` for every fixture whose opengrep run produced output. A stale one is deleted otherwise. | Written atomically, 0o600. |

@@ -59,15 +59,15 @@ func (r *Runner) judge(t *Test, out Output, stderr io.Writer) verdict {
 		}
 	}
 
-	switch {
-	case v.stage != StageResult:
-		if err := removeFile(t.Fixture, actualFile); err != nil {
-			fail(err)
-		}
-	case !r.Learn:
+	// A test that fails at RESULT, also under --learn when expected.txt
+	// cannot be read or written, leaves its results for accept; any other
+	// test removes those of an earlier run.
+	if v.stage == StageResult {
 		if err := writeFile(t.Fixture, actualFile, table); err != nil {
 			fail(err)
 		}
+	} else if err := removeFile(t.Fixture, actualFile); err != nil {
+		fail(err)
 	}
 	if r.KeepSARIF && len(out.Stdout) > 0 {
 		if err := writeFile(t.Fixture, sarifFile, out.Stdout); err != nil {
