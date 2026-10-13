@@ -1,4 +1,4 @@
-package main
+package gogrep
 
 import (
 	"bytes"
@@ -18,6 +18,11 @@ import (
 func TestMain(m *testing.M) {
 	if os.Getenv("GOGREP_TEST_FAKE_OPENGREP") == "1" {
 		os.Exit(fakeOpengrep(os.Args[1:]))
+	}
+	// The files main.go embeds, read from the repository instead.
+	assets = Assets{
+		Rules:  os.DirFS(filepath.Join(repoDir, "rules")),
+		Suites: os.DirFS(filepath.Join(repoDir, "suites")),
 	}
 	os.Exit(m.Run())
 }

@@ -1,4 +1,4 @@
-package main
+package gogrep
 
 import (
 	"encoding/json"
@@ -19,9 +19,12 @@ import (
 
 var update = flag.Bool("update", false, "rewrite the golden files in testdata/golden")
 
-// repoDir is the repository root, the package directory; the tests change
-// the working directory.
-var repoDir, _ = os.Getwd()
+// repoDir is the repository root, two levels above the package directory;
+// the tests change the working directory.
+var repoDir = func() string {
+	wd, _ := os.Getwd()
+	return filepath.Dir(filepath.Dir(wd))
+}()
 
 // testRoot is the test root of a project, as gogrep prints it.
 const testRoot = "opengrep/gogrep/rules/test"

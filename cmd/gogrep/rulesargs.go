@@ -1,7 +1,6 @@
-package main
+package gogrep
 
 import (
-	"embed"
 	"errors"
 	"fmt"
 	"io"
@@ -18,17 +17,6 @@ import (
 	"github.com/odipar/gogrep/internal/rules"
 	"github.com/odipar/gogrep/internal/suite"
 )
-
-// ownRules is the repo's rules directory, embedded in every build as the
-// "gogrep" rule set.
-//
-//go:embed rules
-var ownRules embed.FS
-
-// builtinSuites are the suites shipped with gogrep, by file name without .yaml.
-//
-//go:embed suites/*.yaml
-var builtinSuites embed.FS
 
 // A project's own rules and suites live under opengrep/gogrep in the current
 // directory. Project rules form the "project" rule set; a project suite
@@ -271,11 +259,8 @@ func loadEnv() (*suite.Env, error) {
 		sets[name] = set
 		bundled = append(bundled, name)
 	}
-	own, err := fs.Sub(ownRules, "rules")
-	if err != nil {
-		return nil, err
-	}
-	if sets["gogrep"], err = rules.FromFS(own, testsDir); err != nil {
+	var err error
+	if sets["gogrep"], err = rules.FromFS(assets.Rules, testsDir); err != nil {
 		return nil, err
 	}
 	sets["project"] = rules.Set{}
@@ -318,7 +303,7 @@ func loadSuite(name string) (*suite.Suite, error) {
 			return suite.Parse(name, data)
 		}
 	}
-	if data, err := builtinSuites.ReadFile("suites/" + name + ".yaml"); err == nil {
+	if data, err := fs.ReadFile(assets.Suites, name+".yaml"); err == nil {
 		return suite.Parse(name, data)
 	}
 	return nil, fmt.Errorf("unknown suite %q; list them with: gogrep suites", name)
@@ -361,9 +346,11 @@ func listRules(w, stderr io.Writer, sel selection) error {
 // listSuites implements `gogrep suites`: print the available suites.
 func listSuites(w io.Writer) error {
 	names := map[string]string{}
-	entries, _ := builtinSuites.ReadDir("suites")
+	entries, _ := fs.ReadDir(assets.Suites, ".")
 	for _, e := range entries {
-		names[strings.TrimSuffix(e.Name(), ".yaml")] = "built-in"
+		if n, ok := strings.CutSuffix(e.Name(), ".yaml"); ok {
+			names[n] = "built-in"
+		}
 	}
 	entries, _ = os.ReadDir(projectSuitesDir)
 	for _, e := range entries {
