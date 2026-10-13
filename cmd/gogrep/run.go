@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -18,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/odipar/gogrep/internal/bundle"
+	"github.com/odipar/gogrep/internal/engine"
 	"github.com/odipar/gogrep/internal/opengrep"
 	"github.com/odipar/gogrep/internal/pin"
 	"github.com/odipar/gogrep/internal/sarif"
@@ -25,28 +25,47 @@ import (
 
 // Assets are the files gogrep embeds from the module root, which go:embed
 // cannot reach from this package.
-type Assets struct {
-	Rules  fs.FS  // the repo's rules/ directory, the "gogrep" rule set
-	Suites fs.FS  // the built-in suites, as <name>.yaml files
-	Pins   []byte // opengrep.json
-}
-
-// assets are the embedded files Main was given.
-var assets Assets
+type Assets = engine.Files
 
 // Main runs gogrep with args (without the program name) on the process's
 // stdio and returns its exit code.
 func Main(args []string, a Assets) int {
-	assets = a
-	return run(args, os.Stdout, os.Stderr)
+	return run(args, a, os.Stdout, os.Stderr)
+}
+
+// A cli is one run of gogrep, in the current directory.
+type cli struct {
+	stdout, stderr io.Writer
+	pins           []byte // opengrep.json
+	dir            string // the current directory, where gogrep's project is
+	eng            *engine.Engine
+}
+
+// newCLI returns a cli that writes to stdout and stderr, for the current
+// directory.
+func newCLI(a Assets, stdout, stderr io.Writer) (*cli, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	eng, err := engine.New(engine.Config{}, a)
+	if err != nil {
+		return nil, err
+	}
+	return &cli{stdout: stdout, stderr: stderr, pins: a.Pins, dir: dir, eng: eng}, nil
 }
 
 // run runs gogrep with args and returns its exit code. `gogrep opengrep
 // <args>` runs opengrep with args verbatim, gogrep's own flags included.
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, a Assets, stdout, stderr io.Writer) int {
+	c, err := newCLI(a, stdout, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "gogrep: %v\n", err)
+		return 2
+	}
 	if len(args) > 0 && args[0] == "opengrep" {
-		c := &opengrep.Cmd{Args: args[1:], Stdout: stdout, Stderr: stderr, Foreground: true}
-		return execOpengrep(context.Background(), c, stderr)
+		oc := &opengrep.Cmd{Args: args[1:], Stdout: stdout, Stderr: stderr, Foreground: true}
+		return c.execOpengrep(context.Background(), oc)
 	}
 	args, sel, err := gogrepFlags(args)
 	if err != nil {
@@ -59,16 +78,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	switch sub {
 	case "test":
-		return runTest(args[1:], sel, stdout, stderr)
+		return c.runTest(args[1:], sel)
 	case "rules":
-		err = listRules(stdout, stderr, sel)
+		err = c.listRules(sel)
 	case "suites":
-		err = listSuites(stdout)
+		err = c.listSuites()
 	default:
-		return forward(args, sel, stdout, stderr)
+		return c.forward(args, sel)
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "gogrep: %v\n", err)
+		fmt.Fprintf(stderr, "gogrep: %v\n", explain(err))
 		return 2
 	}
 	return 0
@@ -80,30 +99,31 @@ func run(args []string, stdout, stderr io.Writer) int {
 // foreground group reach gogrep alone, which kills opengrep with every
 // process it started, says so and exits 130. Every other command shares
 // gogrep's process group and stdin, as gogrep opengrep does.
-func forward(args []string, sel selection, stdout, stderr io.Writer) int {
-	args, err := withRules(args, sel)
+func (c *cli) forward(args []string, sel selection) int {
+	stdout, stderr := c.stdout, c.stderr
+	args, err := c.withRules(args, sel)
 	if err != nil {
-		fmt.Fprintf(stderr, "gogrep: %v\n", err)
+		fmt.Fprintf(stderr, "gogrep: %v\n", explain(err))
 		return 2
 	}
 	sarifFiles, sarifStdout := sarifTargets(args)
-	c := &opengrep.Cmd{Args: args, Stdout: stdout, Stderr: stderr}
+	oc := &opengrep.Cmd{Args: args, Stdout: stdout, Stderr: stderr}
 	var out bytes.Buffer
 	if sarifStdout {
-		c.Stdout = &out
+		oc.Stdout = &out
 	}
 	var code int
 	if len(args) > 0 && args[0] == "scan" {
 		ctx, stop := interruptContext()
 		defer stop()
-		c.Stdin = scanStdin()
-		if code = execOpengrep(ctx, c, stderr); ctx.Err() != nil {
+		oc.Stdin = scanStdin()
+		if code = c.execOpengrep(ctx, oc); ctx.Err() != nil {
 			fmt.Fprintln(stderr, "gogrep: interrupted")
 			return 130
 		}
 	} else {
-		c.Foreground = true
-		code = execOpengrep(context.Background(), c, stderr)
+		oc.Foreground = true
+		code = c.execOpengrep(context.Background(), oc)
 	}
 
 	// A command that asked for SARIF and exited 0 without it failed, as
@@ -131,23 +151,23 @@ func forward(args []string, sel selection, stdout, stderr io.Writer) int {
 	return code
 }
 
-// execOpengrep runs c with the opengrep that gogrep runs, in its environment,
-// and returns opengrep's exit code, or 1 when opengrep cannot run. A
-// Foreground c reads gogrep's stdin and shares gogrep's process group, so a
-// terminal's Ctrl-C reaches opengrep directly; gogrep then ignores SIGINT and
-// SIGTERM, to report opengrep's exit status.
-func execOpengrep(ctx context.Context, c *opengrep.Cmd, stderr io.Writer) int {
-	bin, err := opengrepBin()
+// execOpengrep runs oc with the opengrep that gogrep runs, in its
+// environment, and returns opengrep's exit code, or 1 when opengrep cannot
+// run. A Foreground oc reads gogrep's stdin and shares gogrep's process
+// group, so a terminal's Ctrl-C reaches opengrep directly; gogrep then
+// ignores SIGINT and SIGTERM, to report opengrep's exit status.
+func (c *cli) execOpengrep(ctx context.Context, oc *opengrep.Cmd) int {
+	bin, err := c.opengrepBin()
 	if err != nil {
-		fmt.Fprintf(stderr, "gogrep: %v\n", err)
+		fmt.Fprintf(c.stderr, "gogrep: %v\n", err)
 		return 1
 	}
-	c.Path, c.Env = bin, opengrep.UTF8Env(os.Environ())
-	if c.Foreground {
-		c.Stdin = os.Stdin
+	oc.Path, oc.Env = bin, opengrep.UTF8Env(os.Environ())
+	if oc.Foreground {
+		oc.Stdin = os.Stdin
 		signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
 	}
-	err = c.Run(ctx)
+	err = oc.Run(ctx)
 	var exitErr *exec.ExitError
 	switch {
 	case err == nil:
@@ -155,7 +175,7 @@ func execOpengrep(ctx context.Context, c *opengrep.Cmd, stderr io.Writer) int {
 	case errors.As(err, &exitErr):
 		return exitErr.ExitCode()
 	case ctx.Err() == nil:
-		fmt.Fprintf(stderr, "gogrep: %v\n", err)
+		fmt.Fprintf(c.stderr, "gogrep: %v\n", err)
 	}
 	return 1
 }
@@ -183,12 +203,12 @@ func scanStdin() io.Reader {
 
 // opengrepBin resolves the wrapped binary: $OPENGREP_BIN, then the binary
 // embedded in bundled builds, then opengrep on $PATH.
-func opengrepBin() (string, error) {
+func (c *cli) opengrepBin() (string, error) {
 	if p := os.Getenv("OPENGREP_BIN"); p != "" {
 		return p, nil
 	}
 	if bin := bundle.Binary(); len(bin) > 0 {
-		p, err := extractOpengrep(bin)
+		p, err := extractOpengrep(c.pins, bin)
 		if err != nil {
 			return "", fmt.Errorf("extracting embedded opengrep: %w", err)
 		}
@@ -199,9 +219,10 @@ func opengrepBin() (string, error) {
 
 // extractOpengrep returns the path of bin, the embedded opengrep, in the user
 // cache directory, writing it there unless a verified copy is there already.
-// bin must be an opengrep that opengrep.json pins for this platform.
-func extractOpengrep(bin []byte) (string, error) {
-	pins, err := pin.Parse(assets.Pins)
+// bin must be an opengrep that pinJSON, opengrep.json, pins for this
+// platform.
+func extractOpengrep(pinJSON, bin []byte) (string, error) {
+	pins, err := pin.Parse(pinJSON)
 	if err != nil {
 		return "", fmt.Errorf("opengrep.json: %w", err)
 	}

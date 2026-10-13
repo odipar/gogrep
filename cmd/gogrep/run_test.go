@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -30,18 +31,30 @@ func TestMain(m *testing.M) {
 	if os.Getenv("GOGREP_TEST_FAKE_OPENGREP") == "1" {
 		os.Exit(fakeOpengrep(os.Args[1:]))
 	}
-	// The files main.go embeds, read from the repository instead.
 	pins, err := os.ReadFile(filepath.Join(repoDir, "opengrep.json"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	assets = Assets{
+	testAssets = Assets{
 		Rules:  os.DirFS(filepath.Join(repoDir, "rules")),
 		Suites: os.DirFS(filepath.Join(repoDir, "suites")),
 		Pins:   pins,
 	}
 	os.Exit(m.Run())
+}
+
+// testAssets are the files main.go embeds, read from the repository.
+var testAssets Assets
+
+// newTestCLI returns the cli that run would use, which discards its output.
+func newTestCLI(t *testing.T) *cli {
+	t.Helper()
+	c, err := newCLI(testAssets, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
 }
 
 // fakeOpengrep prints its args to stdout, one per line, or with --sarif a
@@ -118,7 +131,7 @@ func useFakeOpengrep(t *testing.T, code int) {
 // runGogrep calls run with args and returns its exit code and output.
 func runGogrep(args ...string) (code int, stdout, stderr string) {
 	var out, errb bytes.Buffer
-	code = run(args, &out, &errb)
+	code = run(args, testAssets, &out, &errb)
 	return code, out.String(), errb.String()
 }
 
@@ -323,6 +336,20 @@ func TestRunStdin(t *testing.T) {
 	}
 }
 
+// Runs share no state: Main once handed its files to run in a package
+// variable.
+func TestRunConcurrently(t *testing.T) {
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Go(func() {
+			if code, _, stderr := runGogrep("rules", "--suite", "all"); code != 0 || stderr != "2121 rules\n" {
+				t.Errorf("gogrep rules --suite all = %d, %q; want 0, %q", code, stderr, "2121 rules\n")
+			}
+		})
+	}
+	wg.Wait()
+}
+
 func TestRunRulesAndSuites(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"opengrep/gogrep/rules/go/no-exec-command.yaml": noExecRule})
@@ -351,8 +378,6 @@ func TestRunRulesAndSuites(t *testing.T) {
 
 func TestExtractOpengrep(t *testing.T) {
 	isolateCache(t)
-	saved := assets.Pins
-	t.Cleanup(func() { assets.Pins = saved })
 	bin := []byte("an opengrep for " + runtime.GOOS + "/" + runtime.GOARCH)
 	sum := sha256.Sum256(bin)
 	pinsFor := func(sha string) []byte {
@@ -360,8 +385,7 @@ func TestExtractOpengrep(t *testing.T) {
 	}
 
 	t.Run("pinned", func(t *testing.T) {
-		assets.Pins = pinsFor(hex.EncodeToString(sum[:]))
-		path, err := extractOpengrep(bin)
+		path, err := extractOpengrep(pinsFor(hex.EncodeToString(sum[:])), bin)
 		cache, _ := os.UserCacheDir()
 		want := filepath.Join(cache, "gogrep", "opengrep-"+hex.EncodeToString(sum[:8]), "opengrep")
 		if runtime.GOOS == "windows" {
@@ -380,8 +404,7 @@ func TestExtractOpengrep(t *testing.T) {
 			"opengrep.json pins no opengrep for " + runtime.GOOS + "/" + runtime.GOARCH},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			assets.Pins = []byte(tt.pins)
-			if path, err := extractOpengrep(bin); err == nil || err.Error() != tt.err {
+			if path, err := extractOpengrep([]byte(tt.pins), bin); err == nil || err.Error() != tt.err {
 				t.Errorf("extractOpengrep = %s, %v; want %q", path, err, tt.err)
 			}
 		})

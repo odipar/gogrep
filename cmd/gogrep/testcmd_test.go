@@ -124,7 +124,7 @@ func requireOpengrep(t *testing.T) {
 			pinSkip = "reading opengrep.json: " + err.Error()
 			return
 		}
-		bin, err := opengrepBin()
+		bin, err := newTestCLI(t).opengrepBin()
 		if err != nil {
 			pinSkip = "no opengrep: " + err.Error()
 			return

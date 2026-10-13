@@ -9,11 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/odipar/gogrep/internal/engine"
 	"github.com/odipar/gogrep/internal/opengrep"
-	"github.com/odipar/gogrep/internal/rules"
 	"github.com/odipar/gogrep/internal/ruletest"
 )
 
@@ -96,43 +97,39 @@ func parseTestArgs(args []string) (testArgs, error) {
 // runTest implements gogrep test: it runs the rule test fixtures under
 // opengrep/gogrep/rules/test that args and sel select, or with accept makes
 // their actual results the expected ones, and returns the exit code.
-func runTest(args []string, sel selection, stdout, stderr io.Writer) int {
+func (c *cli) runTest(args []string, sel selection) int {
 	a, err := parseTestArgs(args)
-	if err == nil && a.accept && (sel.explicit || len(sel.narrow) > 0) {
+	if err == nil && a.accept && (sel.explicit || len(sel.Filters) > 0) {
 		err = errors.New("gogrep test accept takes only paths, not --rule, --suite or --gogrep-* flags")
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "gogrep: %v\n", err)
+		fmt.Fprintf(c.stderr, "gogrep: %v\n", err)
 		return 2
 	}
 	if a.help {
-		io.WriteString(stdout, testUsage)
+		io.WriteString(c.stdout, testUsage)
 		return 0
 	}
-	fixtures, err := discover(a.paths)
+	fixtures, err := c.discover(a.paths)
 	if err == nil {
 		if a.accept {
-			return accept(fixtures, stdout, stderr)
+			return accept(fixtures, c.stdout, c.stderr)
 		}
 		var code int
-		if code, err = runFixtures(fixtures, a, sel, stdout, stderr); err == nil {
+		if code, err = c.runFixtures(fixtures, a, sel); err == nil {
 			return code
 		}
 	}
-	fmt.Fprintf(stderr, "gogrep: %v\n", err)
+	fmt.Fprintf(c.stderr, "gogrep: %v\n", explain(err))
 	return 2
 }
 
 // discover returns the fixtures that paths select in the project in the
 // current directory.
-func discover(paths []string) ([]*ruletest.Fixture, error) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	fixtures, err := ruletest.Discover(wd, projectTestsDir, paths)
+func (c *cli) discover(paths []string) ([]*ruletest.Fixture, error) {
+	fixtures, err := ruletest.Discover(c.dir, filepath.FromSlash(engine.ProjectTestsDir), paths)
 	if errors.Is(err, ruletest.ErrNoRoot) {
-		return nil, fmt.Errorf("no %s directory here; run gogrep test from the project root", filepath.ToSlash(projectTestsDir))
+		return nil, fmt.Errorf("no %s directory here; run gogrep test from the project root", engine.ProjectTestsDir)
 	}
 	return fixtures, err
 }
@@ -140,55 +137,37 @@ func discover(paths []string) ([]*ruletest.Fixture, error) {
 // runFixtures runs the tests of the fixtures whose rules sel selects and
 // returns the exit code. It returns an error, for exit code 2, when it
 // cannot run them.
-func runFixtures(fixtures []*ruletest.Fixture, a testArgs, sel selection, stdout, stderr io.Writer) (int, error) {
-	env, err := loadEnv()
+func (c *cli) runFixtures(fixtures []*ruletest.Fixture, a testArgs, sel selection) (int, error) {
+	if sel.empty() {
+		return 0, errNoRules
+	}
+	tests, untested, err := c.eng.PlanTests(c.dir, fixtures, sel.Selection)
 	if err != nil {
 		return 0, err
 	}
-	ids, active, err := sel.filter(env)
-	if err != nil {
-		return 0, err
-	}
-	var keep func(*rules.Rule) bool
-	if active {
-		keep = func(r *rules.Rule) bool { return ids[r.ID] }
-	}
-	tests := ruletest.Plan(fixtures, allRules(env), keep)
 	if len(tests) == 0 {
 		return 0, errors.New("no tests match the selection")
 	}
 
 	r := &ruletest.Runner{Exec: execFixture, Threads: a.threads, Learn: a.learn, KeepSARIF: a.keepSARIF}
-	configs := map[*rules.Rule]string{}
-	for _, t := range tests {
-		if t.Rule == nil {
-			continue
+	if slices.ContainsFunc(tests, func(t *ruletest.Test) bool { return t.Rule != nil }) {
+		if r.Bin, err = c.testBin(); err != nil {
+			return 0, err
 		}
-		if r.Bin == "" {
-			if r.Bin, err = testBin(); err != nil {
-				return 0, err
-			}
-		}
-		if configs[t.Rule] == "" {
-			if configs[t.Rule], err = writeRules([]*rules.Rule{t.Rule}); err != nil {
-				return 0, fmt.Errorf("writing rule %s: %w", t.Rule.ID, err)
-			}
-		}
-		t.Config = configs[t.Rule]
 	}
 
 	// An interrupt stops the opengrep processes, and the tests that
 	// finished are reported.
 	ctx, stop := interruptContext()
 	defer stop()
-	report := &testReport{stdout: stdout, stderr: stderr, total: len(tests), showOutput: a.showOutput}
+	report := &testReport{stdout: c.stdout, stderr: c.stderr, total: len(tests), showOutput: a.showOutput}
 	report.start()
 	if _, err := r.Run(ctx, tests, report.add); err != nil {
 		return report.interrupted(), nil
 	}
 	code := report.finish()
-	if len(a.paths) == 0 && !active {
-		warnUntested(stderr, ruletest.Untested(env.Sets["project"], tests))
+	if len(a.paths) == 0 {
+		warnUntested(c.stderr, untested)
 	}
 	return code, nil
 }
@@ -213,8 +192,8 @@ func accept(fixtures []*ruletest.Fixture, stdout, stderr io.Writer) int {
 // path: each opengrep process runs in its fixture's directory, where a
 // relative $OPENGREP_BIN would name another file. A binary that is missing
 // is an error, for exit code 2, rather than a failure of every test.
-func testBin() (string, error) {
-	bin, err := opengrepBin()
+func (c *cli) testBin() (string, error) {
+	bin, err := c.opengrepBin()
 	if err == nil {
 		bin, err = exec.LookPath(bin)
 	}
