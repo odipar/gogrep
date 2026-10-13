@@ -271,6 +271,8 @@
 // opengrep-rules is licensed under LGPL-2.1 with the Commons Clause, which
 // grants no right to sell a product or service whose value derives entirely
 // or substantially from those rules; 0xdea and semgrep-go are MIT-licensed.
-// NOTICE.md in this module lists every component and its license; ship it
-// with the program.
+// The program also contains gopkg.in/yaml.v3 (MIT and Apache-2.0). NOTICE.md
+// in this module lists what gogrep brings, the rule sets, opengrep and
+// gopkg.in/yaml.v3, with their licenses: ship it with the program, along
+// with the notices of Go and of the program's other dependencies.
 package gogrep

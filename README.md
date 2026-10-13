@@ -557,9 +557,10 @@ that run opengrep take a `context.Context`.
   LGPL-2.1's conditions for a work that uses the library: pass on the
   license and notices, gogrep's source, and a way to relink the program with
   a modified gogrep (such as its source or object files). The program also
-  contains the rule sets: opengrep-rules carries the Commons Clause, which
-  grants no right to sell a product or service whose value derives entirely
-  or substantially from those rules. See [NOTICE.md](NOTICE.md).
+  contains gopkg.in/yaml.v3 (MIT and Apache-2.0) and the rule sets:
+  opengrep-rules carries the Commons Clause, which grants no right to sell a
+  product or service whose value derives entirely or substantially from
+  those rules. See [NOTICE.md](NOTICE.md).
 
 The [package documentation](https://pkg.go.dev/github.com/odipar/gogrep)
 has the details, and [testdata/consumer/main.go](testdata/consumer/main.go)
@@ -608,6 +609,7 @@ platform as a GitHub release.
 
 gogrep is licensed under the GNU Lesser General Public License v2.1, like
 opengrep. Every build, and every program that imports the Go package,
-contains third-party rule sets under their own licenses, and release builds
-also contain opengrep; see [NOTICE.md](NOTICE.md) and, for Go programs,
+contains third-party rule sets and the YAML parser gopkg.in/yaml.v3 under
+their own licenses, and release builds also contain opengrep; see
+[NOTICE.md](NOTICE.md) and, for Go programs,
 [Use as a Go library](#use-as-a-go-library).

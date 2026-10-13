@@ -1226,7 +1226,7 @@ The package documentation's section "Untrusted repositories" is this table:
   - When `opengrep.json` or `tools/` change, and weekly, `go run ./tools/fetch-opengrep -check-rules` re-fetches into a temporary directory and compares the decompressed listing (names plus SHA-256 of each entry).
   - It never compares `.tar.gz` bytes, because `compress/flate` promises no byte stability across Go releases.
 - **Licensing.**
-  - `NOTICE.md` changes from "Release builds … also contain" to "The gogrep module and every build contain the rule sets below; release builds also contain the opengrep binary."
+  - `NOTICE.md` changes from "Release builds … also contain" to "The gogrep module and every build contain the rule sets below and the Go module gopkg.in/yaml.v3; release builds also contain the opengrep binary." It gains a section for gopkg.in/yaml.v3 (MIT and Apache-2.0) with its `NOTICE`, which Apache-2.0 §4(d) asks redistributors to pass on, and says that it does not cover Go or a program's other dependencies.
   - `doc.go` and the README name the Commons Clause on opengrep-rules: it grants no right to sell a product or service whose value derives entirely or substantially from those rules.
 
 ### 4.2 Finding the executable, in order
