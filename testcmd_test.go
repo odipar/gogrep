@@ -431,6 +431,8 @@ func TestOpengrepVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, stdout, _ := runGogrep("opengrep", "--version")
+	// opengrep ends its lines with CRLF on Windows, and gogrep passes them on.
+	stdout = strings.ReplaceAll(stdout, "\r\n", "\n")
 	if want := strings.TrimPrefix(pin.Version, "v") + "\n"; code != 0 || stdout != want {
 		t.Errorf("gogrep opengrep --version = %d, %q; want 0, %q", code, stdout, want)
 	}
