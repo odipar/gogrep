@@ -448,8 +448,14 @@ pass through. That annotation-based runner is still available as
   - `gogrep`: rules in this repository's [rules/](rules/README.md).
   - `project`: rules in `opengrep/gogrep/rules/` of the scanned project,
     except `test/` (in any letter case), which holds
-    [rule test fixtures](#5-test-custom-rules), is never loaded as rules,
-    and is excluded from gogrep's scans.
+    [rule test fixtures](#5-test-custom-rules) and is never loaded as rules.
+    Scans that run gogrep's rules (no `--config`, `-e` or `$SEMGREP_RULES`,
+    or `--config bundled`) skip it. A scan with your own `--config` scans
+    it like any other directory: opengrep's default ignores skip `test/`,
+    but a project `.semgrepignore` replaces them, so add
+    `opengrep/gogrep/rules/test/` to it. Point `--config` at single rule
+    files rather than at `opengrep/gogrep/rules`, which would load YAML
+    samples in fixtures as rules, or use `--gogrep-ruleset project`.
 - **Rule ids** are stable (`<rule set>.<directory>.<rule id>`), so results
   keep their identity across machines and rule updates.
 - **`gogrep opengrep <args>`** runs the wrapped opengrep with `<args>`

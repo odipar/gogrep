@@ -18,7 +18,7 @@ Design for #2.
   - the sort order is defined explicitly;
   - CRLF in messages is normalised to LF;
   - snippets, fingerprints and tool metadata are left out.
-- **Two other changes.** `gogrep test` takes over opengrep's own `test` subcommand, which stays reachable through a new verbatim pass-through, `gogrep opengrep test …`. The `project` rule set stops loading `opengrep/gogrep/rules/test/`, and gogrep's scans exclude that directory.
+- **Two other changes.** `gogrep test` takes over opengrep's own `test` subcommand, which stays reachable through a new verbatim pass-through, `gogrep opengrep test …`. The `project` rule set stops loading `opengrep/gogrep/rules/test/`, and scans that run gogrep's rules exclude that directory; a scan with the user's own `--config`, `-e` or `$SEMGREP_RULES` is passed on untouched (§7.1).
 
 ## 2. Layout and conventions
 
@@ -393,7 +393,7 @@ gogrep opengrep <args...>                        # the resolved opengrep binary,
 gogrep opengrep test --config ./rules ./tests    # opengrep's annotation-based runner
 ```
 
-The pass-through is handled in `main.go` **before** `gogrepFlags`. Nothing is stripped, no config is injected, and no SARIF is rebranded. stdio is passed through, `utf8Env` applies, and the exit code is the child's. `gogrep scan --test` is **not** an alternative: `scan --test` ignores `--config` and prints "No unit tests found", and with a file config it crashes with an `IndexError` (verified).
+The pass-through is handled in `main.go` **before** `gogrepFlags`. Nothing is stripped, no config is injected, and no SARIF is rebranded. stdio is passed through, `utf8Env` applies, and the exit code is the child's. `gogrep scan --test --config ./rules ./tests` also reaches opengrep's runner, because gogrep passes a user's own `--config` on untouched (verified). It is not the documented route, though: the runner needs a directory config, and when gogrep adds its own config (no `--config`, `--config bundled`, `--rule` or `--suite`), that config is a file, with which the runner crashes with an `IndexError` (verified). With the target `.` instead of a test directory it prints "No unit tests found" (verified). The pass-through runs it with nothing added.
 
 ### 5.2 Synopsis and paths
 
@@ -773,7 +773,7 @@ steps:
     - the tips from §2.5 (`go.mod`, `.gitattributes`, `.gitignore`, a positive sample per fixture, `paths:` being relative to the fixture);
     - a CI snippet;
     - the note that `gogrep test` replaces opengrep's `test`, which stays available as `gogrep opengrep test --config <dir> <tests>`.
-  - **"How gogrep picks rules":** the `project` bullet becomes "rules in `opengrep/gogrep/rules/` except `test/`, which holds rule test fixtures, is never loaded as rules, and is excluded from gogrep's scans". Add a bullet for `gogrep opengrep <args>`.
+  - **"How gogrep picks rules":** the `project` bullet becomes "rules in `opengrep/gogrep/rules/` except `test/`, which holds rule test fixtures and is never loaded as rules", and says that scans that run gogrep's rules exclude `test/`, while a scan with your own `--config` scans it like any other directory. Add a bullet for `gogrep opengrep <args>`.
   - **"Building":** `go test -tags bundled ./...` runs the integration tests after `fetch-opengrep`.
 - **`suites/README.md`.** In the `rules` table, the `project` entry becomes "`opengrep/gogrep/rules/` in the current directory, except `test/`".
 - **`rules/README.md`.** One paragraph: `rules/test/` is reserved and never loaded. Rules in this set are tested from fixtures under `testdata/project/opengrep/gogrep/rules/test/` whose `rule.ref` holds the full id `gogrep.<dir>.<id>`.
@@ -786,7 +786,7 @@ steps:
 | Alternative | Decision |
 |---|---|
 | **opengrep's native runner**: `opengrep test` with `// ruleid:` and `// ok:` on the line before a match | Rejected. Its machine-readable output is native `--json` only, which the SARIF-only rule forbids, and `--sarif` is an unknown option (exit 2). Its text report prints literal `TODO: print(check_output_lines)`. It compares line numbers only, ignoring columns, messages and counts. It pairs rule and test by basename or a `--config` directory, which fits neither `test/<ns>/<fixture>` nor qualified ids. Its loader is stricter than `scan` (`message: y` exits 7). It remains reachable through `gogrep opengrep test`. |
-| **`gogrep scan --test` as the escape hatch** | Rejected: `scan --test` ignores `--config` and finds no tests, and with a file config it crashes (verified). |
+| **`gogrep scan --test` as the escape hatch** | Not documented. It works with the user's own directory `--config` and a test directory, which gogrep passes on untouched, but crashes (`IndexError`) whenever gogrep adds its own file config, as it does without `--config` or with `--rule` or `--suite` (verified). The pass-through has no such cases. |
 | **CodeQL naming**: `<name>.ruleref` plus `<name>.expected`, several tests sharing one sample set | Not chosen. The issue says a fixture refers to *a* rule and has an `expected*` file. Fixed names keep discovery and docs simple, and only `discover.go` would change to adopt this (open question 1). |
 | **One combined opengrep run for many fixtures** (1.3 s against 3.1 s in parallel for 10 fixtures) | Deferred. A schema error in one rule blanks every fixture (exit 7). Rule `paths:` filters see prefixed paths and behave differently (verified). Syntax-error notifications can only be attributed by parsing message text. It is a follow-up, with an isolated fallback and a batched-versus-isolated equivalence test. |
 | **Directory target** plus `--no-git-ignore --x-ignore-semgrepignore-files --exclude 'expected*'` | Rejected. It relies on an internal flag that may disappear and warns on every run, `generic` and `regex` rules would match the regression files, and `.gitignore` still applies. |
