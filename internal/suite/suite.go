@@ -199,9 +199,10 @@ func all[T any](xs []T, f func(T) bool) bool {
 
 // An Env is what suites are evaluated against.
 type Env struct {
-	Sets   map[string][]*rules.Rule // rules by set name
-	Groups map[string][]string      // group name -> set names, e.g. "bundled"
-	Load   func(name string) (*Suite, error)
+	Sets   map[string][]*rules.Rule          // rules by set name
+	Groups map[string][]string               // group name -> set names, e.g. "bundled"
+	Load   func(name string) (*Suite, error) // a suite that the caller names
+	Import func(name string) (*Suite, error) // a suite that an import: entry names
 }
 
 // Count returns the number of rules in env.
@@ -254,7 +255,7 @@ func (s *Suite) selectRules(env *Env, stack []string) ([]*rules.Rule, error) {
 				}
 			}
 		case step.imports != "":
-			sub, err := env.Load(step.imports)
+			sub, err := env.Import(step.imports)
 			if err != nil {
 				return nil, fmt.Errorf("suite %s: %w", s.Name, err)
 			}

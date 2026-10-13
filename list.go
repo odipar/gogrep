@@ -86,9 +86,10 @@ func (e *Engine) Suites(dir string, opts *SuitesOptions) ([]Suite, error) {
 		}
 	}
 	if dir != "" && !opts.NoProjectRules {
-		entries, _ = os.ReadDir(filepath.Join(dir, filepath.FromSlash(ProjectSuitesDir)))
+		suitesDir := filepath.Join(dir, filepath.FromSlash(ProjectSuitesDir))
+		entries, _ = os.ReadDir(suitesDir)
 		for _, d := range entries {
-			if ext := filepath.Ext(d.Name()); ext == ".yaml" || ext == ".yml" {
+			if ext := filepath.Ext(d.Name()); (ext == ".yaml" || ext == ".yml") && regularFile(filepath.Join(suitesDir, d.Name())) {
 				sources[strings.TrimSuffix(d.Name(), ext)] = "project"
 			}
 		}

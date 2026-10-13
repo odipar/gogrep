@@ -2,6 +2,9 @@ package gogrep
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -146,6 +149,81 @@ security-extended built-in false ` + fmt.Sprint(builtIn[3].Rules+2) + ` <nil> "`
 	writeTree(t, dir, map[string]string{"opengrep/gogrep/suites/unparsable.yaml": "- [\n"})
 	if _, err := e.Suites(dir, nil); err == nil || !strings.HasPrefix(err.Error(), "suite unparsable: yaml: ") {
 		t.Errorf("Suites with an unparsable project suite = %v, want its error", err)
+	}
+}
+
+// gogrep reads a project suite, and a suite file that an import: entry names,
+// only if it is a regular file, a symlink to one included, as it reads project
+// rules: a device, a pipe or a directory is no project suite, and importing
+// one fails. A suite file that the caller names is read as it is.
+func TestSuiteSpecialFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no /dev/zero")
+	}
+	t.Parallel()
+	e := newEngine(t, Config{})
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"opengrep/gogrep/rules/go/no-exec-command.yaml": noExecRule,
+		"opengrep/gogrep/suites/mine.yaml":              "- description: Mine\n- rules: project\n",
+		"opengrep/gogrep/suites/imports-zero.yaml":      "- description: Imports a device\n- import: /dev/zero\n",
+	})
+	suites := filepath.Join(dir, filepath.FromSlash(ProjectSuitesDir))
+	if err := os.Mkdir(filepath.Join(suites, "directory.yaml"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{"code-scanning.yaml": "/dev/zero", "linked.yml": filepath.Join(suites, "mine.yaml")} {
+		if err := os.Symlink(target, filepath.Join(suites, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pipes := mkfifo(filepath.Join(suites, "security-extended.yaml")) == nil
+	if pipes {
+		if err := mkfifo(filepath.Join(dir, "caller.yaml")); err != nil {
+			t.Fatal(err)
+		}
+		go os.WriteFile(filepath.Join(dir, "caller.yaml"), []byte("- rules: project\n"), 0o600)
+	} else {
+		t.Log("not testing named pipes")
+	}
+
+	listed, err := e.Suites(dir, nil)
+	if err != nil {
+		t.Fatalf("Suites: %v", err)
+	}
+	var got []string
+	for _, s := range listed {
+		got = append(got, fmt.Sprintf("%s %s %v", s.Name, s.Source, s.Err))
+	}
+	want := []string{
+		"all built-in <nil>",
+		"code-scanning built-in <nil>",
+		"imports-zero project suite imports-zero: suite file /dev/zero is not a regular file",
+		"linked project <nil>",
+		"mine project <nil>",
+		"security-and-quality built-in <nil>",
+		"security-extended built-in <nil>",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("Suites =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+
+	byDefault, err := e.Rules("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs, err := e.Rules(dir, nil); err != nil || len(rs) != len(byDefault)+1 {
+		t.Errorf("Rules of the default suite = %d rules, %v; want the built-in one's %d and the project rule", len(rs), err, len(byDefault))
+	}
+	if _, err := e.Rules(dir, &RulesOptions{Selection: Selection{Suites: []string{"imports-zero"}}}); err == nil ||
+		err.Error() != "suite imports-zero: suite file /dev/zero is not a regular file" {
+		t.Errorf("Rules of a suite that imports a device = %v, want an error", err)
+	}
+	if pipes {
+		rs, err := e.Rules(dir, &RulesOptions{Selection: Selection{Suites: []string{"caller.yaml"}}})
+		if err != nil || !slices.Equal(ids(rs), []string{"project.go.no-exec-command"}) {
+			t.Errorf("Rules of a suite file that is a named pipe = %q, %v; want the project rule", ids(rs), err)
+		}
 	}
 }
 

@@ -345,6 +345,7 @@ Every other behaviour, including all golden files and the injected argv apart fr
    - Parallel `gogrep` processes on a cold machine no longer crash: 2 of 4 died with SIGBUS in each of three trials before.
    - The preparation runs in a process group of its own, so the forwarded commands and `gogrep opengrep …` catch gogrep's interrupts while it runs: SIGINT or SIGTERM (plus SIGHUP and SIGQUIT on Unix) stop it, it removes its private directory, and gogrep prints `gogrep: interrupted` and exits 130. Only then do they ignore SIGINT and SIGTERM and start opengrep in gogrep's group, as before. Without this, a Ctrl-C during the silent first `gogrep --version` killed gogrep alone and orphaned the unpack, whose 245 MB `.runtime-*` stayed in the cache.
 10. **`gogrep test` is hermetic.** It runs opengrep with every `SEMGREP_*` and `OPENGREP_*` variable removed, and with a log file of its own per opengrep process. It therefore no longer overwrites `~/.opengrep/semgrep.log`. Its output is unchanged.
+11. **Project rules and suites are read from regular files only.** A device or a pipe among the project rules, and a project suite that is one, such as a link to `/dev/zero` or a FIFO, is skipped; before, gogrep read it without end. A suite file that an `import:` names must be a regular file, or a symlink to one, and is an error otherwise; one given to `--suite` is still read as it is. A symlinked directory below `opengrep/gogrep/rules` is skipped too, as `fs.WalkDir` does not enter it, instead of failing the load with `is a directory` (§3.6).
 
 **Still the same:**
 
@@ -598,7 +599,11 @@ type Selection struct {
 	// among the built-in suites. An entry that contains a slash or
 	// backslash, or ends in .yaml or .yml, is a suite file: absolute, or
 	// relative to the project directory. A suite's import: entries resolve
-	// the same way.
+	// the same way. A project suite, and a suite file that an import names,
+	// is read only if it is a regular file or a symlink to one, as a device
+	// or a pipe that a repository put there could be endless: another file
+	// of a project suite's name is skipped, and an import of one fails. A
+	// suite file in Suites is read as it is, /dev/stdin too.
 	Suites []string
 
 	// Rules are rule ids: a qualified id such as
@@ -1064,7 +1069,7 @@ func (e *IntegrityError) Error() string // "<path>: SHA-256 <got>, want the pinn
 - **Boolean fields name the non-default behaviour:** `NoProjectRules`, `ReadOnly`, `Foreground`, `AllowUnpinned`.
 - **Return types are concrete.** There are no exported interfaces and no third-party types.
 - **No positional parameter will ever be added.** This avoids gosec's breaking changes to `NewAnalyzer`.
-- **`Rules` and `Suites` take no context:** they never run opengrep, and their file work is bounded, apart from reading project rules that a repository can point anywhere (§3.6), which `NoProjectRules` turns off.
+- **`Rules` and `Suites` take no context:** they never run opengrep, and their file work is bounded, apart from reading project rules and suites that a repository can point anywhere (§3.6), which `NoProjectRules` turns off.
 - **No mutable package-level state is exported.**
 
 ### 3.3 Concurrency guarantees
@@ -1162,7 +1167,7 @@ The package documentation's section "Untrusted repositories" is this table:
 | `opengrep/gogrep/rules/` | Adds rules that run. opengrep rules are patterns and cannot run code, but they can add noise or cost CPU (`pattern-regex`). | `NoProjectRules`; `RuleTimeout`, `MaxMemoryMB` and a ctx deadline bound the cost |
 | A project rule file that is a symlink | Project files are read with `os.DirFS`, which follows a symlinked file. A repository can therefore make gogrep read a file outside it as rule YAML, and that file's content may appear in parse errors. The CLI relies on this so that projects can share rules. Below the rules directory, gogrep enters no symlinked directory (`fs.WalkDir` does not; `rules.FromFS` skips one, which it used to fail on) and reads no device or pipe, such as a link to `/dev/zero` (`TestFromFSSkipsSymlinkedDir`). | `NoProjectRules` |
 | `opengrep/gogrep/rules`, `opengrep/gogrep` or `opengrep` that is a symlink | `os.Stat` and `os.DirFS` follow it, so the repository can make gogrep walk any directory tree, read every regular file in it whole and load the rule YAML among them (verified with a link to the module cache: 3.9 s). This is v0.3.0's behaviour, and a project may share its rules directory this way. Reading happens before opengrep runs, and neither a ctx deadline nor `RuleTimeout` or `MaxMemoryMB` bounds it. | `NoProjectRules` |
-| `opengrep/gogrep/suites/` | A project `code-scanning.yaml` replaces the default suite and can select nothing | `NoProjectRules` |
+| `opengrep/gogrep/suites/` | A project `code-scanning.yaml` replaces the default suite and can select nothing. A project suite may be a symlink, and its `import:` entries may name any file, absolute or relative to `dir`, so the repository can make gogrep read any file as suite YAML. gogrep reads a project suite, and a suite file that an import names, only if it is a regular file, through symlinks: another file of a suite's name is skipped, as `rules.FromFS` skips one, and an import of one fails (`TestSuiteSpecialFiles`). Before, as in v0.3.0, a default `Scan` of a project whose `code-scanning.yaml` linked to `/dev/zero` reached 4.2 GB in 2 s, and a FIFO hung `Scan`, `Suites` and `gogrep rules`. A suite file that the caller names is read as it is, so `--suite /dev/stdin` still works. Like project rules, suites are read whole before opengrep runs, which no ctx deadline bounds. | `NoProjectRules` |
 | `opengrep/gogrep/rules/test/` | Excluded from scans by the injected `--exclude` | Under `NoProjectRules` it is scanned like any other directory |
 | `nosemgrep` comments | Mark matches as suppressed | They stay in `Findings` with `Suppressed: true`; the caller decides |
 | `.semgrepignore`, `.gitignore` | Hide files from the scan; opengrep reads `.semgrepignore` from its working directory, which is `dir` | Not overridable in v0.4. opengrep's only switch, `--x-ignore-semgrepignore-files`, is internal and also drops its default ignores (verified). Consumers can report the file's presence. |

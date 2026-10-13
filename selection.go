@@ -23,7 +23,11 @@ type Selection struct {
 	// among the built-in suites. An entry that contains a slash or
 	// backslash, or ends in .yaml or .yml, is a suite file: absolute, or
 	// relative to the project directory. A suite's import: entries resolve
-	// the same way.
+	// the same way. A project suite, and a suite file that an import names,
+	// is read only if it is a regular file or a symlink to one, as a device
+	// or a pipe that a repository put there could be endless: another file
+	// of a project suite's name is skipped, and an import of one fails. A
+	// suite file in Suites is read as it is, /dev/stdin too.
 	Suites []string
 
 	// Rules are rule ids: a qualified id such as

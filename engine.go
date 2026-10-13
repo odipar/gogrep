@@ -280,7 +280,8 @@ func (e *Engine) loadEnv(dir string, noProject bool) (*suite.Env, error) {
 	env := &suite.Env{
 		Sets:   map[string][]*rules.Rule{"gogrep": own, "project": project},
 		Groups: map[string][]string{"bundled": slices.Collect(maps.Keys(bundled))},
-		Load:   e.loader(dir, noProject),
+		Load:   e.loader(dir, noProject, false),
+		Import: e.loader(dir, noProject, true),
 	}
 	maps.Copy(env.Sets, bundled)
 	env.Groups["all"] = slices.Collect(maps.Keys(env.Sets))
@@ -306,15 +307,21 @@ func projectRules(dir string, noProject bool) ([]*rules.Rule, error) {
 
 // loader returns how a call with the project directory dir loads suites:
 // a suite file relative to dir, then a project suite unless noProject is
-// set, then a built-in suite.
-func (e *Engine) loader(dir string, noProject bool) func(name string) (*suite.Suite, error) {
+// set, then a built-in suite. A project suite is read only if it is a
+// regular file, and so is a suite file if imported is set, for the suites
+// that import: entries name: the caller chose the others.
+func (e *Engine) loader(dir string, noProject, imported bool) func(name string) (*suite.Suite, error) {
 	return func(name string) (*suite.Suite, error) {
 		if strings.ContainsAny(name, `/\`) || strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
-			return loadSuiteFile(dir, name)
+			return loadSuiteFile(dir, name, imported)
 		}
 		if dir != "" && !noProject {
 			for _, ext := range []string{".yaml", ".yml"} {
-				if data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(ProjectSuitesDir), name+ext)); err == nil {
+				file := filepath.Join(dir, filepath.FromSlash(ProjectSuitesDir), name+ext)
+				if !regularFile(file) {
+					continue
+				}
+				if data, err := os.ReadFile(file); err == nil {
 					return parseSuite(name, data)
 				}
 			}
@@ -326,15 +333,29 @@ func (e *Engine) loader(dir string, noProject bool) func(name string) (*suite.Su
 	}
 }
 
+// regularFile reports whether the file name is a regular file, through a
+// symlink. A repository's suites are read only from regular files, as its
+// rules are (rules.FromFS): a device or a pipe could be endless.
+func regularFile(name string) bool {
+	fi, err := os.Stat(name)
+	return err == nil && fi.Mode().IsRegular()
+}
+
 // loadSuiteFile loads the suite file name, relative to dir unless it is
-// absolute. Its errors name the file as given.
-func loadSuiteFile(dir, name string) (*suite.Suite, error) {
+// absolute; with regularOnly, only if it is a regular file. Its errors name
+// the file as given.
+func loadSuiteFile(dir, name string, regularOnly bool) (*suite.Suite, error) {
 	file := name
 	if !filepath.IsAbs(name) {
 		if dir == "" {
 			return nil, &SelectionError{Kind: "suite", Value: name, Err: fmt.Errorf("suite file %s is relative, and there is no project directory", name)}
 		}
 		file = filepath.Join(dir, name)
+	}
+	if regularOnly {
+		if fi, err := os.Stat(file); err == nil && !fi.Mode().IsRegular() {
+			return nil, &SelectionError{Kind: "suite", Value: name, Err: fmt.Errorf("suite file %s is not a regular file", name)}
+		}
 	}
 	data, err := os.ReadFile(file)
 	if pe, ok := err.(*fs.PathError); ok {
