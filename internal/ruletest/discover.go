@@ -42,7 +42,8 @@ type Fixture struct {
 // that fails at SETUP, and so are a symlink outside every fixture, which
 // would hide the fixtures it leads to, and a fixture that breaks a rule of
 // the design's §2.3. It is an error when root is not a directory, when a
-// path does not exist or lies outside root, or when there are no fixtures.
+// path does not exist, lies outside root or selects no test, or when there
+// are no tests at all.
 func Discover(root string, paths []string) ([]*Fixture, error) {
 	t := &tree{root: root, name: path.Clean(filepath.ToSlash(root)), entries: map[string]fs.DirEntry{}}
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
@@ -79,8 +80,15 @@ func Discover(root string, paths []string) ([]*Fixture, error) {
 	})
 
 	var out []*Fixture
+	used := make([]bool, len(selected)) // whether each path selects a test
 	pick := func(dir string) bool {
-		return len(selected) == 0 || slices.ContainsFunc(selected, func(p string) bool { return within(p, dir) || within(dir, p) })
+		picked := len(selected) == 0
+		for i, p := range selected {
+			if within(p, dir) || within(dir, p) {
+				picked, used[i] = true, true
+			}
+		}
+		return picked
 	}
 	for _, dir := range t.fixtures {
 		if pick(dir) {
@@ -104,8 +112,8 @@ func Discover(root string, paths []string) ([]*Fixture, error) {
 	// The walk does not follow symlinks, so the fixtures behind a symlinked
 	// fixture or namespace directory would silently not run.
 	for _, p := range t.paths {
-		if t.entries[p].Type()&fs.ModeSymlink == 0 || !pick(p) ||
-			slices.ContainsFunc(t.fixtures, func(dir string) bool { return within(p, dir) }) {
+		if t.entries[p].Type()&fs.ModeSymlink == 0 ||
+			slices.ContainsFunc(t.fixtures, func(dir string) bool { return within(p, dir) }) || !pick(p) {
 			continue
 		}
 		out = append(out, &Fixture{
@@ -114,12 +122,19 @@ func Discover(root string, paths []string) ([]*Fixture, error) {
 			Setup: fmt.Errorf("symlinks are not supported in the test root: %s", p),
 		})
 	}
-	if len(out) == 0 {
-		under := t.name
-		if len(paths) > 0 {
-			under = strings.Join(paths, ", ")
+	// A path that selects nothing is an error even next to others that
+	// do, so a mistyped path cannot pass silently.
+	var none []string
+	for i, u := range used {
+		if !u {
+			none = append(none, paths[i])
 		}
-		return nil, fmt.Errorf("no tests found under %s", under)
+	}
+	if len(out) == 0 && len(paths) == 0 {
+		none = []string{t.name}
+	}
+	if len(none) > 0 {
+		return nil, fmt.Errorf("no tests found under %s", strings.Join(none, ", "))
 	}
 	slices.SortFunc(out, func(a, b *Fixture) int { return strings.Compare(a.Name, b.Name) })
 	return out, nil
@@ -150,7 +165,10 @@ func (t *tree) relPaths(paths []string) ([]string, error) {
 		}
 		rel, err := filepath.Rel(absRoot, abs)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return nil, fmt.Errorf("%s is not under %s", p, t.name)
+			var ok bool
+			if rel, ok = t.linkedRel(abs); !ok {
+				return nil, fmt.Errorf("%s is not under %s", p, t.name)
+			}
 		}
 		if _, err := os.Lstat(native); errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("%s does not exist", p)
@@ -160,6 +178,28 @@ func (t *tree) relPaths(paths []string) ([]string, error) {
 		rels = append(rels, filepath.ToSlash(rel))
 	}
 	return rels, nil
+}
+
+// linkedRel returns the absolute path abs, which does not lie under the root
+// as written, relative to the root if a leading part of it is the root's
+// directory reached another way: /tmp/p and /private/tmp/p name the same
+// directory on macOS, where /tmp is a symlink, and editors pass such
+// resolved paths. The shortest such part counts, so a symlink below the root
+// is never followed.
+func (t *tree) linkedRel(abs string) (string, bool) {
+	root, err := os.Stat(t.root)
+	if err != nil {
+		return "", false
+	}
+	rel := ""
+	for d := abs; ; d = filepath.Dir(d) {
+		if fi, err := os.Stat(d); err == nil && os.SameFile(fi, root) {
+			rel, _ = filepath.Rel(d, abs)
+		}
+		if filepath.Dir(d) == d {
+			return rel, rel != ""
+		}
+	}
 }
 
 // display returns the name of the directory dir below the root.

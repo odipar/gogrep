@@ -405,12 +405,12 @@ gogrep test accept [path...]
   - a directory selects every fixture under it, searched recursively, or the fixture that contains it;
   - a file (`rule.ref`, `expected.txt`, a sample) selects the fixture that contains it.
 
-  With no paths, the whole test root is used.
+  With no paths, the whole test root is used. A path that does not lie inside the test root as written is still accepted when a leading part of it is the test root's directory, reached through symlinks: on macOS `/tmp` and `/var` are symlinks into `/private`, so the cwd `/tmp/p` and an editor's resolved path `/private/tmp/p/…` name the same directory. gogrep compares directories (`os.SameFile`), takes the shortest such leading part, and so never follows a symlink below the test root.
 - **Usage errors (exit 2):**
   - a path outside the test root: `<path> is not under opengrep/gogrep/rules/test`;
   - a nonexistent path: `<path> does not exist`;
   - a missing test root: `no opengrep/gogrep/rules/test directory here; run gogrep test from the project root`;
-  - finding no fixtures: `no tests found under <paths>`. A CI step that silently ran nothing would be a false green.
+  - a path that selects no test, even next to paths that do: `no tests found under <path>, …`, listing each such path. With no paths, an empty test root gives `no tests found under opengrep/gogrep/rules/test`. A CI step that silently ran nothing would be a false green, and so would one that silently dropped a mistyped path: on a case-insensitive file system `…/test/GO/exec-command` exists but names no fixture.
 - **The display name** of each fixture is its clean slash path relative to the cwd.
 
 ### 5.3 Flags for `run`
@@ -678,7 +678,7 @@ There are no `_test.go` files today. All new tests use the standard `testing` pa
 - `ruletest/discover`:
   - depth-1 `rule.ref`, nested fixtures, orphan `expected.txt`, unknown `expected*` files;
   - symlinks among the samples and symlinked fixture and namespace directories (skipped where they cannot be created), OS junk, hidden-file samples, `.gogrep-*.tmp`;
-  - no samples, the argument-length guard, and path arguments (directory, file, outside the root).
+  - no samples, the argument-length guard, and path arguments (directory, file, outside the root, one path that selects nothing, a path in the wrong case, and absolute paths through a symlinked cwd).
 - `ruletest/run`, using a fake `Exec`:
   - output order is independent of `-j`;
   - deleting a stale `actual.txt`; `--learn`; `--keep-sarif`;

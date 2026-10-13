@@ -251,6 +251,7 @@ func TestDiscoverPaths(t *testing.T) {
 		{"absolute outside", []string{filepath.Dir(abs) + "/../../../../x"}, nil, filepath.Dir(abs) + "/../../../../x is not under opengrep/gogrep/rules/test"},
 		{"missing", []string{root + "/go/nope"}, nil, root + "/go/nope does not exist"},
 		{"no fixture", []string{root + "/go.mod", root + "/.gitattributes"}, nil, "no tests found under " + root + "/go.mod, " + root + "/.gitattributes"},
+		{"one path without a fixture", []string{root + "/go/net", root + "/go.mod", root + "/shallow"}, nil, "no tests found under " + root + "/go.mod"},
 	}
 	if slices.Contains(all, "linkns") {
 		tests = append(tests,
@@ -269,6 +270,47 @@ func TestDiscoverPaths(t *testing.T) {
 				t.Errorf("Discover(%q) = %q, %q; want %q, %q", tt.paths, got, errText(err), tt.want, tt.err)
 			}
 		})
+	}
+}
+
+// A path in the wrong case exists on a case-insensitive file system but
+// names no fixture, so it fails there too.
+func TestDiscoverPathCase(t *testing.T) {
+	fixtureTree(t)
+	root := "opengrep/gogrep/rules/test"
+	_, err := Discover(testRoot, []string{root + "/go/net", root + "/GO/exec-command"})
+	if got := errText(err); got != "no tests found under "+root+"/GO/exec-command" && got != root+"/GO/exec-command does not exist" {
+		t.Errorf("Discover with a path in the wrong case: %q", got)
+	}
+}
+
+// An absolute path may reach the test root through symlinks other than
+// those of the current directory, as resolved paths from editors do.
+func TestDiscoverLinkedPaths(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("cannot create symlinks: %v", err)
+	}
+	resolved, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, filepath.Join(real, testRoot), map[string]string{"go/x/rule.ref": "x\n", "go/x/a.go": "package a\n"})
+	for _, cwd := range []string{link, resolved} {
+		t.Chdir(cwd)
+		for _, base := range []string{real, link, resolved} {
+			for _, p := range []string{filepath.Join(base, testRoot, "go"), filepath.Join(base, testRoot, "go", "x", "a.go"), filepath.Join(base, testRoot)} {
+				fixtures, err := Discover(testRoot, []string{p})
+				if err != nil || len(fixtures) != 1 || fixtures[0].Name != "opengrep/gogrep/rules/test/go/x" {
+					t.Errorf("in %s, Discover(%q) = %v, %v; want the fixture go/x", cwd, p, summarize(fixtures), err)
+				}
+			}
+		}
+		outside := filepath.Join(resolved, "opengrep", "gogrep", "rules")
+		if _, err := Discover(testRoot, []string{outside}); errText(err) != outside+" is not under opengrep/gogrep/rules/test" {
+			t.Errorf("in %s, Discover(%q) = %q, want it not under the test root", cwd, outside, errText(err))
+		}
 	}
 }
 

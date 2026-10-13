@@ -382,8 +382,8 @@ opengrep's own test runner: gogrep opengrep test ...
 Exit codes: 0 all passed, 1 a test failed, 2 usage or setup error, 130 interrupted.
 ```
 
-Finding no tests exits 2, so a misconfigured CI job cannot pass without
-testing anything. After a run of every fixture, gogrep warns on stderr about
+Finding no tests exits 2, and so does a path that selects none, so a
+misconfigured CI job cannot pass without testing anything. After a run of every fixture, gogrep warns on stderr about
 `project` rules that no fixture tests:
 
 ```
