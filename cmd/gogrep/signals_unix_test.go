@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -91,6 +92,55 @@ func TestScanInterrupted(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The first run of a forwarded command prepares opengrep's runtime in a
+// process group of its own, which a terminal's Ctrl-C does not reach, so
+// gogrep catches its interrupts meanwhile: it stops the preparation, which
+// leaves nothing behind, says so and exits 130.
+func TestForegroundPreparationInterrupted(t *testing.T) {
+	useFakeOpengrep(t, 0)
+	cache := os.Getenv("XDG_CACHE_HOME") // isolated
+	for _, args := range [][]string{{"--version"}, {"opengrep", "--version"}} {
+		for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP} {
+			t.Run(strings.Join(args, " ")+" "+sig.String(), func(t *testing.T) {
+				// Undo the ignoring of an earlier pass-through, and keep
+				// the signal from ending the test.
+				caught := make(chan os.Signal, 1)
+				signal.Notify(caught, sig)
+				defer signal.Stop(caught)
+				ready := filepath.Join(t.TempDir(), "ready")
+				t.Setenv("GOGREP_TEST_FAKE_PREPARE_WAIT", ready)
+				done := make(chan string, 1)
+				go func() {
+					code, stdout, stderr := runGogrep(args...)
+					done <- fmt.Sprintf("%d, %q, %q", code, stdout, stderr)
+				}()
+				for _, err := os.Stat(ready); err != nil; _, err = os.Stat(ready) {
+					select {
+					case got := <-done:
+						t.Fatalf("gogrep %q = %s before the preparation ran", args, got)
+					case <-time.After(10 * time.Millisecond):
+					}
+				}
+				syscall.Kill(os.Getpid(), sig)
+				select {
+				case got := <-done:
+					if want := `130, "", "gogrep: interrupted\n"`; got != want {
+						t.Errorf("gogrep %q, sent %v during the preparation = %s; want %s", args, sig, got, want)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatalf("gogrep %q still runs after %v", args, sig)
+				}
+				filepath.WalkDir(cache, func(p string, d fs.DirEntry, err error) error {
+					if err == nil && strings.HasPrefix(d.Name(), ".runtime-") {
+						t.Errorf("the interrupted preparation left %s", p)
+					}
+					return err
+				})
+			})
+		}
 	}
 }
 

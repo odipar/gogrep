@@ -38,10 +38,17 @@ import (
 // pid there.
 //
 // The --version run that prepares opengrep's runtime, which has a log file,
-// it answers at once.
+// it answers at once; with $GOGREP_TEST_FAKE_PREPARE_WAIT set, it first
+// creates that file and waits a minute.
 func Main(args []string) int {
 	if log := filepath.Base(os.Getenv("SEMGREP_LOG_FILE")); len(args) == 1 && args[0] == "--version" &&
 		(log == "log" || strings.HasPrefix(log, "opengrep-")) {
+		if p := os.Getenv("GOGREP_TEST_FAKE_PREPARE_WAIT"); p != "" {
+			if os.WriteFile(p, nil, 0o600) != nil {
+				return 2
+			}
+			time.Sleep(time.Minute)
+		}
 		fmt.Println("1.30.2")
 		return 0
 	}

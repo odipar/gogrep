@@ -18,7 +18,7 @@ import (
 // forward runs an opengrep command: a scan gets the selected rules (see
 // withRules), and the SARIF it writes is rebranded and checked. A scan runs
 // in a process group of its own: the signals a terminal sends its
-// foreground group reach gogrep alone, which kills opengrep with every
+// foreground group reach gogrep alone, which stops opengrep with every
 // process it started, says so and exits 130. Every other command shares
 // gogrep's process group and stdin, as gogrep opengrep does.
 func (c *cli) forward(args []string, sel selection) int {
@@ -32,14 +32,16 @@ func (c *cli) forward(args []string, sel selection) int {
 		opts.Selection = &sel.Selection
 	}
 	ctx, scan := context.Background(), len(args) > 0 && args[0] == "scan"
+	var cmd *gogrep.Cmd
+	var code int
 	if scan {
 		var stop context.CancelFunc
 		ctx, stop = interruptContext()
 		defer stop()
+		cmd, code = c.command(ctx, opts, args)
 	} else {
-		opts.Foreground = true
+		cmd, code = c.foregroundCommand(opts, args)
 	}
-	cmd, code := c.command(ctx, opts, args)
 	if cmd != nil {
 		files, toStdout := sarifTargets(cmd.Args[1:])
 		var out bytes.Buffer
@@ -92,13 +94,30 @@ func (c *cli) checkSARIF(code int, out []byte, toStdout bool, files []string) in
 // passThrough implements `gogrep opengrep <args>`: opengrep runs with args
 // verbatim, on gogrep's streams, and its exit code is gogrep's.
 func (c *cli) passThrough(args []string) int {
-	ctx := context.Background()
-	cmd, code := c.command(ctx, &gogrep.CommandOptions{Foreground: true}, args)
+	cmd, code := c.foregroundCommand(&gogrep.CommandOptions{}, args)
 	if cmd == nil {
 		return code
 	}
 	cmd.Stdout, cmd.Stderr = c.stdout, c.stderr
-	return c.runCmd(ctx, cmd, true)
+	return c.runCmd(context.Background(), cmd, true)
+}
+
+// foregroundCommand prepares opengrep to run args in gogrep's process group,
+// as command does. The first run's preparation of opengrep's runtime takes
+// some seconds in a process group of its own, which a terminal's Ctrl-C
+// does not reach, so gogrep catches its interrupts meanwhile: on one, the
+// preparation is stopped and cleans up, and gogrep says so and returns a
+// nil Cmd and 130.
+func (c *cli) foregroundCommand(opts *gogrep.CommandOptions, args []string) (*gogrep.Cmd, int) {
+	opts.Foreground = true
+	ctx, stop := catchInterrupts()
+	cmd, code := c.command(ctx, opts, args)
+	stop()
+	if ctx.Err() != nil {
+		fmt.Fprintln(c.stderr, "gogrep: interrupted")
+		return nil, 130
+	}
+	return cmd, code
 }
 
 // command prepares opengrep to run args in the current directory, as

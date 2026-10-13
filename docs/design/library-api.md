@@ -207,8 +207,8 @@ How each subcommand maps onto the API:
 | CLI | Public API call | CLI-only work |
 |---|---|---|
 | `gogrep scan …` | `eng.Command(ctx, dir, &CommandOptions{Selection: sel or nil}, args...)`, then `Cmd.Run()` | `withRules` decision; `signal.NotifyContext`; stdin; rebranding SARIF to stdout and to `-o`/`--output`/`--sarif-output` files (chmod 0o600); the no-SARIF check; exit codes |
-| any other first argument that is not a gogrep subcommand (`gogrep --version`, `gogrep lsp`, …) | `eng.Command(ctx, dir, &CommandOptions{Foreground: true}, args...)` | `signal.Ignore(SIGINT, SIGTERM)`, `os.Stdin`, SARIF rebranding, as today |
-| `gogrep opengrep …` | `eng.Command(ctx, dir, &CommandOptions{Foreground: true}, args...)` | `signal.Ignore`, `os.Stdin`, streams passed straight through, exit code verbatim, no rebranding |
+| any other first argument that is not a gogrep subcommand (`gogrep --version`, `gogrep lsp`, …) | `eng.Command(ctx, dir, &CommandOptions{Foreground: true}, args...)` | interrupts caught while `Command` prepares opengrep's runtime (§2.5 item 9), then `signal.Ignore(SIGINT, SIGTERM)`, `os.Stdin`, SARIF rebranding, as today |
+| `gogrep opengrep …` | `eng.Command(ctx, dir, &CommandOptions{Foreground: true}, args...)` | interrupts caught during the preparation, then `signal.Ignore`, `os.Stdin`, streams passed straight through, exit code verbatim, no rebranding |
 | `gogrep rules` | `eng.Rules(dir, &RulesOptions{Selection: sel})` | tabwriter table; `N rules` (or `1 rule`) on stderr |
 | `gogrep suites` | `eng.Suites(dir, nil)` | Table: `(default)`, and `-` when `Err` is set |
 | `gogrep test [run]` | `eng.Test(ctx, dir, &TestOptions{…, Progress: printer})` | `Executing N tests.`, status lines, diffs, `$ (cd … && …)` lines, summary, untested warning, `gogrep: interrupted` |
@@ -340,11 +340,12 @@ Every other behaviour, including all golden files and the injected argv apart fr
    - Every opengrep that gogrep starts, including `gogrep opengrep …`, gets `XDG_CACHE_HOME=<cache>/gogrep/runtime-<sha16>`, unless that path is not ASCII (§4.6).
    - After upgrading, the first run unpacks once (about 8 s, 245 MB).
    - Parallel `gogrep` processes on a cold machine no longer crash: 2 of 4 died with SIGBUS in each of three trials before.
+   - The preparation runs in a process group of its own, so the forwarded commands and `gogrep opengrep …` catch gogrep's interrupts while it runs: SIGINT or SIGTERM (plus SIGHUP and SIGQUIT on Unix) stop it, it removes its private directory, and gogrep prints `gogrep: interrupted` and exits 130. Only then do they ignore SIGINT and SIGTERM and start opengrep in gogrep's group, as before. Without this, a Ctrl-C during the silent first `gogrep --version` killed gogrep alone and orphaned the unpack, whose 245 MB `.runtime-*` stayed in the cache.
 10. **`gogrep test` is hermetic.** It runs opengrep with every `SEMGREP_*` and `OPENGREP_*` variable removed, and with a log file of its own per opengrep process. It therefore no longer overwrites `~/.opengrep/semgrep.log`. Its output is unchanged.
 
 **Still the same:**
 
-- `gogrep opengrep …` and the other forwarded commands keep the caller's process group, `signal.Ignore`, `os.Stdin`, verbatim arguments and opengrep's exit code. Their environment gains only item 9's `XDG_CACHE_HOME`.
+- `gogrep opengrep …` and the other forwarded commands keep the caller's process group, `signal.Ignore`, `os.Stdin`, verbatim arguments and opengrep's exit code. Their environment gains only item 9's `XDG_CACHE_HOME`, and only item 9's preparation is interrupted as a scan is.
 - `gogrep scan` keeps writing `~/.opengrep/semgrep.log`, because `Command` does not set a log file.
 
 **Known quirks, kept unchanged:**
@@ -500,7 +501,9 @@ type OpengrepInfo struct {
 // each path, size and modification time. The first time an executable is
 // used with a CacheDir, Opengrep unpacks opengrep's runtime (about 245 MB
 // and 8 s) privately and publishes it there, so that concurrent opengrep
-// processes never start from a half-written runtime.
+// processes never start from a half-written runtime. That opengrep runs in a
+// process group of its own, which a terminal's Ctrl-C does not reach, and
+// ctx stops it.
 //
 // Scan, Test and Command call Opengrep; call it yourself to fail early.
 // When no opengrep is found, it returns an error that wraps ErrNoOpengrep
@@ -834,7 +837,10 @@ type Cmd struct {
 // Command prepares opengrep to run with args (without the executable) in
 // dir, an absolute directory. It finds and prepares opengrep as Opengrep
 // does and, with a Selection, writes the selection's rule file, so it fails
-// as they do. ctx bounds the run.
+// as they do. ctx bounds that and the run. Preparing opengrep's runtime runs
+// in a process group of its own also with Foreground, so a host whose
+// Ctrl-C should stop it cancels ctx, or first calls Opengrep under a ctx
+// that Ctrl-C cancels.
 func (e *Engine) Command(ctx context.Context, dir string, opts *CommandOptions, args ...string) (*Cmd, error)
 
 // Run starts the command and waits for it. It returns nil when opengrep

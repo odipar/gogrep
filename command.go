@@ -65,7 +65,10 @@ type Cmd struct {
 // Command prepares opengrep to run with args (without the executable) in
 // dir, an absolute directory. It finds and prepares opengrep as Opengrep
 // does and, with a Selection, writes the selection's rule file, so it fails
-// as they do. ctx bounds the run.
+// as they do. ctx bounds that and the run. Preparing opengrep's runtime runs
+// in a process group of its own also with Foreground, so a host whose
+// Ctrl-C should stop it cancels ctx, or first calls Opengrep under a ctx
+// that Ctrl-C cancels.
 func (e *Engine) Command(ctx context.Context, dir string, opts *CommandOptions, args ...string) (*Cmd, error) {
 	if opts == nil {
 		opts = &CommandOptions{}

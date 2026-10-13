@@ -93,10 +93,49 @@ func run(args []string, stdout, stderr io.Writer) int {
 // does SIGHUP, stays ignored; given no signals at all, NotifyContext would
 // catch every one.
 func interruptContext() (context.Context, context.CancelFunc) {
-	if sigs := slices.DeleteFunc(slices.Clone(interrupts), signal.Ignored); len(sigs) > 0 {
+	if sigs := caughtInterrupts(); len(sigs) > 0 {
 		return signal.NotifyContext(context.Background(), sigs...)
 	}
 	return context.Background(), func() {}
+}
+
+// catchInterrupts returns a context that one of gogrep's interrupts cancels
+// until stop is called. Unlike interruptContext's stop, this one leaves the
+// context as it is, so that a Cmd made under it can still run; it stops
+// catching the signals.
+func catchInterrupts() (ctx context.Context, stop func()) {
+	sigs := caughtInterrupts()
+	if len(sigs) == 0 {
+		return context.Background(), func() {}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	caught := make(chan os.Signal, 1)
+	signal.Notify(caught, sigs...)
+	done, exited := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(exited)
+		select {
+		case <-caught:
+			cancel()
+		case <-done:
+		}
+	}()
+	return ctx, func() {
+		signal.Stop(caught)
+		close(done)
+		<-exited
+		select {
+		case <-caught: // as the goroutine ended
+			cancel()
+		default:
+		}
+	}
+}
+
+// caughtInterrupts returns the interrupts that gogrep catches: those it was
+// not started with ignored.
+func caughtInterrupts() []os.Signal {
+	return slices.DeleteFunc(slices.Clone(interrupts), signal.Ignored)
 }
 
 // opengrepBinEnv returns $OPENGREP_BIN, the opengrep that gogrep runs if
