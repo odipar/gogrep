@@ -30,7 +30,9 @@ func passJobControl(cmd *gogrep.Cmd) (stop func()) {
 				return
 			case sig := <-sigs:
 				if sig == syscall.SIGTSTP {
-					// SIGSTOP: a SIGTSTP would come back here.
+					// SIGSTOP, as a SIGTSTP would come back here: once
+					// caught, Go never gives SIGTSTP its default action
+					// back, not even after signal.Reset.
 					cmd.Signal(syscall.SIGSTOP)
 					syscall.Kill(os.Getpid(), syscall.SIGSTOP)
 				} else {
