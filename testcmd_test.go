@@ -236,6 +236,24 @@ func TestTestUsage(t *testing.T) {
 	})
 }
 
+// Only a run of every fixture warns about project rules that no fixture
+// tests.
+func TestTestUntestedWarning(t *testing.T) {
+	useFakeOpengrep(t, 0)
+	testProject(t, brokenFiles)
+	const warning = "gogrep: warning: 1 project rule has no test fixture:\n  project.broken.go.no-exec-command\n"
+	for _, args := range [][]string{{"test"}, {"test", testRoot + "/go/exec-command"}, {"test", testRoot}} {
+		want := ""
+		if len(args) == 1 {
+			want = warning
+		}
+		// The fake opengrep loads no rule, so tests fail at RULE.
+		if code, _, stderr := runGogrep(args...); code != 1 || stderr != want {
+			t.Errorf("gogrep %q = %d, %q; want 1, %q", args, code, stderr, want)
+		}
+	}
+}
+
 // gogrep test runs each opengrep process in its fixture's directory, so it
 // resolves $OPENGREP_BIN first, and a missing binary is a setup error.
 func TestTestOpengrepBin(t *testing.T) {
@@ -322,14 +340,15 @@ func TestTestMissingExpected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, stdout, _ := runGogrep("test", fixture)
-	if code != 1 {
-		t.Errorf("gogrep test without expected.txt = %d, want 1", code)
+	// A run of some fixtures does not warn about the rules of the others.
+	code, stdout, stderr := runGogrep("test", fixture)
+	if code != 1 || stderr != "" {
+		t.Errorf("gogrep test without expected.txt = %d, %q; want 1, no stderr", code, stderr)
 	}
 	checkGolden(t, "exec-command-missing.txt", stdout)
 	checkFile(t, actual, table)
 
-	code, stdout, stderr := runGogrep("test", "accept")
+	code, stdout, stderr = runGogrep("test", "accept")
 	if want := "Accepted " + fixture + "\n"; code != 0 || stdout != want || stderr != "" {
 		t.Errorf("gogrep test accept = %d, %q, %q; want 0, %q, no stderr", code, stdout, stderr, want)
 	}
@@ -354,9 +373,9 @@ func TestTestRegression(t *testing.T) {
 	fixture := testRoot + "/go/exec-command"
 	table := "| sample.go:7:6:7:24 | Avoid running \"ls\" with exec.Command |\n"
 
-	code, stdout, _ := runGogrep("test", fixture)
-	if code != 1 {
-		t.Errorf("gogrep test = %d, want 1", code)
+	code, stdout, stderr := runGogrep("test", fixture)
+	if code != 1 || stderr != "" {
+		t.Errorf("gogrep test = %d, %q; want 1, no stderr", code, stderr)
 	}
 	checkGolden(t, "exec-command-regression.txt", stdout)
 	checkFile(t, fixture+"/actual.txt", table)

@@ -703,7 +703,7 @@ There are no `_test.go` files today. All new tests use the standard `testing` pa
   6. a schema-error rule (exit 7) and a bad-pattern rule (exit 2): `RULE`, while the other fixtures still pass;
   7. unresolvable and ambiguous references: `RULE`;
   8. an empty fixture, a nested fixture, `expected.text` and an orphan: `SETUP`;
-  9. `--rule no-exec-command` runs only matching fixtures plus broken ones;
+  9. `--rule no-exec-command` runs only matching fixtures plus broken ones; neither it nor a run limited to paths warns about untested rules, while a full run does;
   10. `-j 1` and `-j 8` give identical stdout;
   11. `gogrep rules --suite all` lists no fixture YAML;
   12. `gogrep scan .` with a project `.semgrepignore` reports no fixture samples;
