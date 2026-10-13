@@ -498,14 +498,23 @@ go get github.com/odipar/gogrep@latest
 
 ```go
 eng, err := gogrep.New(gogrep.Config{})
-if _, err := eng.Opengrep(ctx); errors.Is(err, gogrep.ErrNoOpengrep) {
+if err != nil {
+	return err
+}
+if _, err = eng.Opengrep(ctx); errors.Is(err, gogrep.ErrNoOpengrep) {
 	_, err = eng.InstallOpengrep(ctx, nil) // the only network access; verified against opengrep.json
+}
+if err != nil {
+	return err
 }
 res, err := eng.Scan(ctx, "/abs/clone", &gogrep.ScanOptions{
 	Selection:      gogrep.Selection{Suites: []string{"security-extended"}},
 	NoProjectRules: true, // an untrusted clone
 	Jobs:           2,
 })
+if err != nil {
+	return err
+}
 for _, f := range res.Findings {
 	fmt.Println(f.RuleID, f.Path, f.StartLine, f.Level, f.Suppressed)
 }
