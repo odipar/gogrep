@@ -417,7 +417,7 @@ gogrep test accept [path...]
 | `--learn` | For a `RESULT` failure (including a missing `expected.txt`), write the actual output to `expected.txt`, delete `actual.txt`, and report `LEARNED` followed by the diff, so the change shows in CI logs. Learned tests count as passed. Failures at other stages still fail. |
 | `-j N`, `--threads N` (also `=N`) | Number of opengrep processes at once. The default and `0` both mean `runtime.NumCPU()`. `-N` means NumCPU − N, at least 1. Each process peaks at about 265 MB RSS (measured), so small CI runners can pass `-j 2`. |
 | `--keep-sarif` | Write each fixture's raw opengrep stdout to `<fixture>/actual.sarif`, not rebranded, mode 0o600. This is the counterpart of CodeQL's `--keep-databases`. Without the flag, a stale `actual.sarif` is deleted. |
-| `--show-opengrep-output` | After each fixture's report, print its opengrep command line (`  $ opengrep scan …`) and its captured stderr, each line prefixed with `  > `. Output is buffered per fixture, so parallel runs never interleave. CodeQL warns that its own equivalent interleaves. |
+| `--show-opengrep-output` | After each fixture's report, print its opengrep command line (`  $ <opengrep binary> scan …`, quoted for a POSIX shell) and its captured stderr, each line prefixed with `  > `, without blank lines at the start or end. Output is buffered per fixture, so parallel runs never interleave. CodeQL warns that its own equivalent interleaves. |
 | `--rule`, `--suite`, `--gogrep-lang`, `--gogrep-category`, `--gogrep-ruleset` | These are parsed by the existing `gogrepFlags`, wherever they appear, and choose fixtures by their **resolved** rule. The selection is the union of `--suite` and `--rule` (all rules if neither is given; **no default suite**), narrowed by the `--gogrep-*` filters. A fixture is left out only when its rule resolved to a rule outside the selection. Fixtures that fail at `SETUP` or `RULE` always run, so a typo is never hidden. A selection that matches no rules exits 2 with the existing message. A selection that keeps no fixtures exits 2: `no tests match the selection`. |
 | `-h`, `--help` | Print usage and exit 0. |
 
@@ -478,7 +478,7 @@ Executing 4 tests.
 
 - **Status lines.** Each status line is `[i/n] PASSED|LEARNED|FAILED(SETUP|RULE|RUN|RESULT) <fixture>`.
 - **Details.** A `RESULT` failure or a `LEARNED` test is followed by its diff. Other failures are followed by their description, indented two spaces.
-- **Missing `expected.txt`.** It prints `Cannot find expected.txt.`, then the diff against an empty file.
+- **Missing `expected.txt`.** It prints `Cannot find expected.txt.`, then the diff against an empty file. A test that `--learn` learned prints only the diff.
 - **Final line.**
   - When all tests pass: `All N tests passed.`, or `All N tests passed (L learned).` when some were learned.
   - Otherwise: `P tests passed; F tests failed:`, followed by the sorted `  FAILED: <fixture>` lines.
@@ -499,7 +499,7 @@ Executing 4 tests.
 ### 5.5 `gogrep test accept`
 
 - For each selected fixture that has `actual.txt`, gogrep renames it to `expected.txt` (replacing the old file), sets the mode to 0o600, and prints `Accepted <fixture>`.
-- Fixtures without `actual.txt` are skipped silently, as in CodeQL.
+- Fixtures without `actual.txt` are skipped silently, as in CodeQL. So are fixtures that fail at `SETUP`: `gogrep test` deletes their `actual.txt`, so any left is stale.
 - It never loads rules and never runs opengrep.
 - It exits 0, or 2 on a usage error or a failed rename.
 
@@ -564,7 +564,9 @@ Opengrep reports `executionSuccessful: true` even on fatal config errors (verifi
 | 2 | The exit code is 7 (invalid YAML or schema) or 8 (unknown language), or the resolved id is not in `tool.driver.rules[].id` and no error-level notification has the descriptor `SemgrepError`. An invalid pattern exits 2 with a `Rule parse error` notification and drops just that rule (verified). A missing target also exits 2 and leaves `driver.rules` empty, but its notification is a `SemgrepError` (`File not found: missing.go`, verified), so it falls through to row 3. | `RULE` | Each error-level notification as `<descriptor.id>: <message>`, or the stderr tail if there are none. |
 | 3 | Any other non-zero exit code (for example 2 with `File not found`), or any error-level notification. | `RUN` | The notifications, the exit code, and the stderr tail. |
 | 4 | A result whose `ruleId` is not the resolved id. | `RUN` | `unexpected rule id <x>` |
-| 5 | Otherwise: render the table (§4) and compare it with `expected.txt`. | `RESULT` on a mismatch | The diff. |
+| 5 | Otherwise: render the table (§4) and compare it with `expected.txt`. | `RESULT` on a mismatch | The diff, or the error when `expected.txt` exists but cannot be read. |
+
+In descriptions, each line of stderr is prefixed with `> `, blank lines at the start and end are dropped, and the exit code reads `opengrep exited with code <n>`. When row 2 applies without error notifications, the description starts with `opengrep did not load rule <id>`.
 
 **Warning- and note-level notifications become `diagnostics` rows, not failures.** Some samples are intentionally partial code. A sample that unexpectedly stops parsing, though, silently loses matches near the error. Recording the notification makes both cases visible and reviewable. The cost: an opengrep upgrade that rewords a parser message changes `expected.txt`, and that change is reviewed in the pin-bump PR.
 
@@ -580,15 +582,17 @@ Opengrep reports `executionSuccessful: true` even on fatal config errors (verifi
 - **Atomic write.** `os.CreateTemp(fixtureDir, ".gogrep-*.tmp")`, write, close, `Chmod(0o600)`, then `Rename` over the target, removing the temp file on error. `os.Rename` replaces existing files on Windows too.
 - **Ignored by discovery.** Discovery skips `.gogrep-*.tmp` files, so a leftover temp file never becomes a sample.
 - **Only the reporter writes.** All writes happen in the sequential reporting phase.
+- **Directories are left alone.** A directory named `actual.txt` or `actual.sarif` is never deleted; discovery already fails the fixture at `SETUP` for it (§2.3).
 
 ### 6.5 Parallelism and interrupts
 
 - **Workers.** `-j` workers take fixtures in sorted order. Each worker runs `exec.CommandContext` with a short `WaitDelay`.
+- **The first run runs alone.** On its first run, opengrep 1.30.2 unpacks its Python runtime (about 245 MB) into `~/.cache/opengrep/v1.30.2/`, and a run that starts meanwhile can crash with SIGBUS. With an empty cache, two of four parallel runs died this way (exit 138), while eight parallel runs with the cache in place all succeeded (verified). CI runners start with an empty cache, so the first fixture's run ends before any other starts. This costs one run's time when the cache is already there.
 - **Interrupts.** `gogrep scan` ignores SIGINT and SIGTERM so that its single child gets Ctrl-C. `gogrep test` instead **catches** them with `signal.Notify(os.Interrupt, syscall.SIGTERM)`. When a signal arrives:
   - gogrep cancels the context, so no new run starts and running children are killed (they normally received Ctrl-C from the terminal already);
   - results of interrupted runs are discarded, and no files are written for them;
   - the reporter prints the fixtures that completed, in order, up to the first incomplete one, then `gogrep: interrupted` on stderr, and exits **130**.
-- **Speed.** Each run costs about 1.2 s, of which 0.8 s is opengrep's startup. Ten fixtures take about 3.1 s with 8 workers on an M2, against 12.3 s sequentially (measured).
+- **Speed.** Each run costs about 1.2 s, of which 0.8 s is opengrep's startup. Ten fixtures take about 3.1 s with 8 workers on an M2, against 12.3 s sequentially (measured). Running the first run alone adds about one run: on a busier M2, the runner took 4.2 s with 8 workers against 3.2 s without that wait, and 18.0 s sequentially (measured).
 
 ### 6.6 Cache files and network
 
@@ -619,6 +623,8 @@ The repo's own `gogrep` set (`rules/`, embedded, currently empty) gets **no** in
 type Exec func(ctx context.Context, dir string, args []string) (stdout, stderr []byte, code int, err error)
 ```
 
+`args[0]` is the opengrep binary. `err` is set when opengrep could not start or did not exit normally (for example, killed after an interrupt); otherwise `code` is its exit code.
+
 | File | Contents |
 |---|---|
 | `doc.go` | Package comment. |
@@ -627,10 +633,10 @@ type Exec func(ctx context.Context, dir string, args []string) (stdout, stderr [
 | `sarif.go` | Typed decode of only `version`, `runs[].tool.driver.rules[].id`, `runs[].invocations[].toolExecutionNotifications[].{level, descriptor.id, message.text}` and `runs[].results[].{ruleId, message.text, locations[0].physicalLocation.{artifactLocation.uri, region.{startLine, startColumn, endLine, endColumn}}}`. |
 | `table.go` | `Render(log *Log, samples []string) ([]byte, error)`: uri normalisation, escaping, sorting, headers and the Windows path rewrite in diagnostics. `Normalize([]byte) []string` for the reader. |
 | `diff.go` | Myers line diff and unified output (§4.6). |
-| `classify.go` | The §6.3 decision table: `Classify(log, code, stderr, ruleID) (Stage, []string)`. |
-| `run.go` | `Runner{Bin string; Exec Exec; Threads int; Learn, KeepSARIF, ShowOutput bool}`, the worker pool, interrupt handling and the ordered handoff to the reporter. |
-| `files.go` | Atomic 0o600 writes, stale-file deletion, and `Accept`. |
-| `report.go` | Status lines, descriptions, the summary, the untested-rules warning, and computing the exit code. |
+| `classify.go` | Rows 1 to 4 of the §6.3 decision table: `Classify(out Output, ruleID string, samples []string) (table []byte, stage Stage, desc []string)`, where `Output{Stdout, Stderr []byte; Code int; Err error}` is one run. Row 1 needs the raw stdout and `Render`'s errors, so it takes the output rather than a decoded log, and returns the table that row 5 compares. |
+| `run.go` | `Test{*Fixture; Rule *rules.Rule; Err error; Config string}`, and `Plan(fixtures, all, keep func(*rules.Rule) bool) []*Test`, which resolves each reference and applies the selection. `Runner{Bin string; Exec Exec; Threads int; Learn, KeepSARIF, ShowOutput bool}` and `(*Runner).Run(ctx, tests, stdout, stderr) int`: the worker pool, interrupt handling (the caller cancels `ctx` on SIGINT or SIGTERM) and the ordered handoff to the reporter. |
+| `files.go` | Atomic 0o600 writes, stale-file deletion, and `Accept(fixtures, stdout, stderr) int`. |
+| `report.go` | Comparing with `expected.txt`, status lines, descriptions, the summary, computing the exit code, and `WarnUntested(w, project, tests)`, which the caller calls after a full run. |
 
 **`testcmd.go` (package main).** `runTest` handles `run`/`accept` dispatch, flag parsing, usage text, `loadEnv`, `selection.filter`, `rules.Write`, `opengrepBin`, and wiring `Exec` to `exec.CommandContext` with `utf8Env`.
 
