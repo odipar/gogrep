@@ -361,8 +361,9 @@ Example: the message `bad a|b` followed by a newline, a tab and `c` is written `
 - **Diff.** On a mismatch gogrep prints a unified line diff:
   - headers `--- expected` and `+++ actual`, then hunks `@@ -a,b +c,d @@`;
   - counts are always printed, and an empty range starts at the line before it, as GNU diff does (an empty file gives `-0,0`);
-  - 3 lines of context;
-  - a Myers diff implemented with the standard library only.
+  - 3 lines of context, and hunks less than 7 unchanged lines apart are merged, as GNU diff does;
+  - within a change, the deleted lines come before the inserted ones;
+  - a Myers diff (the linear-space variant) implemented with the standard library only.
 
 ### 4.7 Why a table
 
