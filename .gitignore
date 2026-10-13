@@ -1,5 +1,6 @@
 /gogrep
 /dist/
 /internal/bundle/bin/
+/.idea/
 **/opengrep/gogrep/rules/test/**/actual.txt
 **/opengrep/gogrep/rules/test/**/actual.sarif
