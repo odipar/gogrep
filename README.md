@@ -322,7 +322,8 @@ project.go.no-exec-command  WARNING   -         -           go
 
 **The `expected.txt` format.** Each result is a row
 `| <path>:<startLine>:<startColumn>:<endLine>:<endColumn> | <message> |`, and
-the file is the same on macOS, Linux and Windows:
+the file is the same on macOS, Linux and Windows as long as git checks the
+samples out byte for byte (see the line endings tip below):
 
 - The path is relative to the fixture and uses `/`.
 - Positions are what opengrep reports, as in `gogrep scan --sarif`: they
@@ -399,7 +400,11 @@ gogrep: warning: 1 project rule has no test fixture:
   `go test ./...`.
 - **Line endings:** add `opengrep/gogrep/rules/test/.gitattributes` holding
   `* -text`, so git checks samples and expected files out byte for byte on
-  every OS.
+  every OS. Rules with `pattern-regex` need it: Git for Windows checks text
+  files out with CRLF by default, and a regex match that runs to the end of
+  a line then includes the carriage return, which changes its end column
+  and its message. Structural patterns (checked for Go, YAML and generic
+  rules) report the same for CRLF and LF samples.
 - **`.gitignore`** the files gogrep writes into fixtures:
   ```
   **/opengrep/gogrep/rules/test/**/actual.txt

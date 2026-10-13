@@ -13,10 +13,10 @@ Design for #2.
 - **What a run does.** gogrep resolves `rule.ref` against its qualified rule ids, such as `project.go.no-exec-command`. It then runs opengrep with only that rule, passing the samples as explicit targets, and reads **only opengrep's SARIF output**. The SARIF is rendered as a sorted CodeQL-style pipe table and compared line by line with `expected.txt`.
 - **When a test fails.** gogrep prints a unified diff and writes `actual.txt`. `gogrep test accept` (or `gogrep test --learn`) turns the actual output into the new `expected.txt`.
 - **Failure stages.** A failing test is classified as `SETUP` (the fixture is malformed), `RULE` (the reference does not resolve, or opengrep rejects the rule), `RUN` (opengrep failed, or its output cannot be trusted) or `RESULT` (the output differs). Exit codes are 0 when all pass, 1 when any test fails, 2 for usage or setup errors, and 130 when interrupted.
-- **Same file on every OS.** The expected output is byte-identical on macOS, Linux and Windows:
+- **Same file on every OS.** The expected output is byte-identical on macOS, Linux and Windows, provided git checks the samples out byte for byte (`* -text`, §2.5):
   - paths are relative to the fixture and use `/`;
   - the sort order is defined explicitly;
-  - CRLF is normalised;
+  - CRLF in messages is normalised to LF;
   - snippets, fingerprints and tool metadata are left out.
 - **Two other changes.** `gogrep test` takes over opengrep's own `test` subcommand, which stays reachable through a new verbatim pass-through, `gogrep opengrep test …`. The `project` rule set stops loading `opengrep/gogrep/rules/test/`, and gogrep's scans exclude that directory.
 
@@ -30,7 +30,7 @@ Design for #2.
     ├── go/
     │   └── no-exec-command.yaml                 # rule: project.go.no-exec-command
     └── test/                                    # test root: reserved, never loaded as rules
-        ├── .gitattributes                       # "* -text" (recommended, §2.5)
+        ├── .gitattributes                       # "* -text" (needed for regex rules, §2.5)
         ├── go.mod                               # Go projects only (recommended, §2.5)
         └── go/                                  # <namespace>, mirrors rules/go/
             └── exec-command/                    # <fixture>: one test
@@ -198,7 +198,7 @@ diagnostics
 ### 2.5 Project hygiene (documented, not enforced)
 
 - **Go projects** should add `opengrep/gogrep/rules/test/go.mod` (`module fixtures`). Without it, `go build/vet/test ./...` compiles the `.go` samples, and samples are often deliberately bad code. A nested module drops out of `./...`. The file is outside every fixture, so it is neither a sample nor a rule.
-- **`opengrep/gogrep/rules/test/.gitattributes`** with `* -text` stops git from converting line endings in samples and expected files. Samples are then byte-identical on every OS. gogrep's CRLF normalisation (§4.6) is a second line of defence.
+- **`opengrep/gogrep/rules/test/.gitattributes`** with `* -text` stops git from converting line endings in samples and expected files, so samples are byte-identical on every OS. Fixtures of rules that use `pattern-regex` (in any language, `regex` included) need it to give the same output everywhere: Git for Windows checks text files out with CRLF by default (`core.autocrlf=true`), and a regex match that reaches the end of a line then includes the CR. Its end column is one higher and a capture ends in `\r`: `| crlf.txt:2:3:2:15 | found [fix it\r] |` against `| lf.txt:2:3:2:14 | found [fix it] |` (verified). Structural patterns, generic ones included, gave the same positions and messages for CRLF and LF samples (verified for Go, YAML and generic rules), so for them gogrep's normalisation of CRLF inside messages (§4.4) is enough. gogrep does not check the attribute: a CRLF sample may be deliberate, and only git knows how it was checked out.
 - **`.gitignore`** should contain:
   ```
   **/opengrep/gogrep/rules/test/**/actual.txt
@@ -310,7 +310,7 @@ escape       = "\\" / "\|" / "\n" / "\r" / "\t" / "\u00" 2HEXUP / "\x" 2HEXUP
 - **Positions are copied exactly as opengrep reports them.**
   - They are 1-based, and `endColumn` is **exclusive**. They match what `gogrep scan --sarif` shows.
   - Columns count **UTF-8 bytes**: after `"héllo→"` a match starts at byte column 32, not character column 29 (verified).
-  - CRLF and LF samples give the same positions (verified).
+  - CRLF and LF samples give the same positions for structural patterns, generic ones included (verified). A `pattern-regex` match that reaches the end of a line includes the CR, which makes its end column one higher (§2.5).
   - Treat positions as opaque numbers that the fixture pins down.
   - A result with a region field that is missing or 0 fails at `RUN` (§6.3).
 - **Paths are relative to the fixture directory and use `/`**, because opengrep runs with the fixture as its working directory and relative targets (§6.2). The uri is normalised in this order:
@@ -338,7 +338,7 @@ Every cell is escaped: path, message, descriptor id and diagnostic message. Firs
 | any other character | itself |
 
 - **Why `\` is escaped.** Escaping it gives every row exactly one reading. CodeQL's handling of `\` was not established, but gogrep needs this either way.
-- **Why CRLF is normalised first.** A multi-line metavariable binding taken from a sample that git checked out with CRLF would otherwise give different expected text on Windows. opengrep keeps the CR in such a binding (verified).
+- **Why CRLF is normalised first.** A multi-line metavariable binding taken from a sample that git checked out with CRLF would otherwise give different expected text on Windows. opengrep keeps the CR in such a binding (verified). This covers CR LF pairs only: a regex capture that ends at a line's CR keeps it as `\r`, and its end column differs as well, so regex fixtures need samples checked out byte for byte (§2.5).
 - **`\xHH` is defensive.** opengrep 1.30.2 writes U+FFFD for bytes in a sample that are not UTF-8 (verified), and Go's JSON decoder does the same, so decoded SARIF never contains them.
 
 Example: the message `bad a|b` followed by a newline, a tab and `c` is written `bad a\|b\n\tc`.
@@ -730,7 +730,7 @@ testdata/project/opengrep/gogrep/rules/
 Together these fixtures prove the following:
 
 - `*_test.go`, `vendor/`, hidden and `-`-prefixed samples are scanned;
-- CRLF samples give the same positions as LF samples;
+- a Go rule gives the same positions for CRLF and LF samples;
 - a rule's `paths:` sees fixture-relative paths;
 - a full-id reference resolves;
 - YAML under `test/` is never loaded as rules;
