@@ -1,7 +1,9 @@
 package gogrep
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -224,6 +226,47 @@ func TestSelectionErrors(t *testing.T) {
 			}
 		} else if err := tt.sel.Validate(); err == nil || err.Error() != tt.text {
 			t.Errorf("Validate(%+v) = %v; want %q", tt.sel, err, tt.text)
+		}
+	}
+}
+
+// Every method rejects a directory that is missing or not a directory, in an
+// error that names it rather than opengrep, which os/exec would blame for a
+// directory it cannot enter.
+func TestDirectoryArguments(t *testing.T) {
+	t.Parallel()
+	e := newFakeEngine(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"main.go": "package main\n"})
+	calls := map[string]func(dir string) error{
+		"Scan": func(dir string) error { _, err := e.Scan(ctx, dir, nil); return err },
+		"Command": func(dir string) error {
+			_, err := e.Command(ctx, dir, nil, "--version")
+			return err
+		},
+		"Rules":       func(dir string) error { _, err := e.Rules(dir, nil); return err },
+		"Suites":      func(dir string) error { _, err := e.Suites(dir, nil); return err },
+		"Test":        func(dir string) error { _, err := e.Test(ctx, dir, nil); return err },
+		"AcceptTests": func(dir string) error { _, err := e.AcceptTests(dir, nil); return err },
+		"Cmd.Run": func(bad string) error {
+			cmd, err := e.Command(ctx, dir, nil, "--version")
+			if err != nil {
+				return err
+			}
+			cmd.Dir = bad // changed before Run
+			return cmd.Run()
+		},
+	}
+	for _, bad := range []string{filepath.Join(dir, "missing"), filepath.Join(dir, "main.go")} {
+		for name, call := range calls {
+			err := call(bad)
+			if err == nil || !strings.HasPrefix(err.Error(), fmt.Sprintf("directory %q: ", bad)) || errors.Is(err, ErrNoOpengrep) {
+				t.Errorf("%s(%s) = %v; want an error that names the directory, not ErrNoOpengrep", name, bad, err)
+			}
+			if filepath.Base(bad) == "missing" && !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("%s(%s) = %v; want fs.ErrNotExist", name, bad, err)
+			}
 		}
 	}
 }

@@ -101,9 +101,11 @@ func (e *Engine) Command(ctx context.Context, dir string, opts *CommandOptions, 
 
 // Run starts the command and waits for it. It returns nil when opengrep
 // exits 0; an *ExitError, with nil Stderr and Result, when it exits
-// non-zero; an error wrapping ErrNoOpengrep when it cannot start; and an
-// error wrapping ctx.Err() when ctx ended it. Run reads nothing opengrep
-// writes: interpreting its output, SARIF included, is up to the caller.
+// non-zero; an error naming Dir when opengrep cannot run there, as it is
+// missing or not a directory; an error wrapping ErrNoOpengrep when it cannot
+// start otherwise; and an error wrapping ctx.Err() when ctx ended it. Run
+// reads nothing opengrep writes: interpreting its output, SARIF included, is
+// up to the caller.
 func (c *Cmd) Run() error {
 	if c.ran {
 		return errors.New("Cmd.Run called twice")
@@ -124,7 +126,20 @@ func (c *Cmd) Run() error {
 	case errors.As(err, &exitErr):
 		return &ExitError{Code: exitErr.ExitCode()}
 	case errors.As(err, &startErr):
-		return &noOpengrep{err}
+		return startError(c.Dir, err)
 	}
 	return err
+}
+
+// startError returns the error for an opengrep that could not start in dir
+// ("" for the current directory): os/exec reports a directory it cannot
+// enter as a failure to run the executable, so that leaves the Engine without
+// an opengrep only when dir is fine.
+func startError(dir string, err error) error {
+	if dir != "" {
+		if derr := enterable(dir); derr != nil {
+			return derr
+		}
+	}
+	return &noOpengrep{err}
 }

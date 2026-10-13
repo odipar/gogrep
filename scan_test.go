@@ -342,3 +342,28 @@ func TestNoProcessState(t *testing.T) {
 		t.Errorf("the environment changed")
 	}
 }
+
+// An opengrep that cannot be started leaves the Engine without one. Its
+// runtime preparation fails too, which is only logged.
+func TestScanUnstartable(t *testing.T) {
+	t.Parallel()
+	exe := filepath.Join(t.TempDir(), "opengrep.exe")
+	if err := os.WriteFile(exe, bytes.Repeat([]byte{0xde, 0xad}, 50), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	e := newEngine(t, Config{Opengrep: exe})
+	ctx := context.Background()
+	if _, err := e.Opengrep(ctx); err != nil {
+		t.Fatalf("Opengrep = %v, want nil, as a failed preparation is only logged", err)
+	}
+	if _, err := e.Scan(ctx, t.TempDir(), nil); !errors.Is(err, ErrNoOpengrep) {
+		t.Errorf("Scan with an opengrep that cannot start = %#v, want ErrNoOpengrep", err)
+	}
+	cmd, err := e.Command(ctx, t.TempDir(), nil, "--version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Run(); !errors.Is(err, ErrNoOpengrep) {
+		t.Errorf("Cmd.Run of an opengrep that cannot start = %#v, want ErrNoOpengrep", err)
+	}
+}

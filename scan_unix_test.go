@@ -3,9 +3,13 @@
 package gogrep
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -45,4 +49,23 @@ func running(pid int) bool {
 	}
 	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
 	return err == nil && !strings.HasPrefix(strings.TrimSpace(string(out)), "Z")
+}
+
+// A directory that cannot be searched cannot be entered either, which is
+// named as such.
+func TestUnsearchableDirectory(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root enters any directory")
+	}
+	e := newFakeEngine(t)
+	dir := filepath.Join(t.TempDir(), "locked")
+	if err := os.Mkdir(dir, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o700)
+	_, err := e.Scan(context.Background(), dir, nil)
+	if !errors.Is(err, fs.ErrPermission) || errors.Is(err, ErrNoOpengrep) || !strings.HasPrefix(err.Error(), fmt.Sprintf("directory %q: ", dir)) {
+		t.Errorf("Scan of an unsearchable directory = %v; want a permission error that names it", err)
+	}
 }

@@ -124,10 +124,10 @@ type Config struct {
 // An Engine is safe for concurrent use by multiple goroutines. No method
 // reads or changes the process's working directory, signal dispositions or
 // standard streams, and none reads environment variables beyond the
-// defaults Config documents. Every directory argument must be absolute.
-// Methods that run opengrep take a context: when it is done, they kill the
-// opengrep processes they started, with every process those started, and
-// return an error that wraps ctx.Err().
+// defaults Config documents. Every directory argument must be the absolute
+// path of an existing directory. Methods that run opengrep take a context:
+// when it is done, they kill the opengrep processes they started, with every
+// process those started, and return an error that wraps ctx.Err().
 type Engine struct {
 	cfg      Config
 	cacheDir string
@@ -194,11 +194,31 @@ func (e *Engine) writeRules(rs []*rules.Rule) (string, error) {
 	return rules.Write(dir, rs)
 }
 
-// checkDir checks a directory argument: it must be absolute, or "" where
-// optional is set.
+// checkDir checks a directory argument: it must be the absolute path of a
+// directory that can be entered, or "" where optional is set.
 func checkDir(dir string, optional bool) error {
-	if (dir != "" || !optional) && !filepath.IsAbs(dir) {
+	switch {
+	case dir == "" && optional:
+		return nil
+	case !filepath.IsAbs(dir):
 		return fmt.Errorf("directory %q is not an absolute path", dir)
+	}
+	return enterable(dir)
+}
+
+// enterable reports why a process could not run in dir: it does not exist,
+// is not a directory, or cannot be searched. Statting dir/. needs what
+// entering dir does.
+func enterable(dir string) error {
+	fi, err := os.Stat(dir + string(filepath.Separator) + ".")
+	if pe, ok := err.(*fs.PathError); ok {
+		err = pe.Err
+	}
+	switch {
+	case err != nil:
+		return fmt.Errorf("directory %q: %w", dir, err)
+	case !fi.IsDir():
+		return fmt.Errorf("directory %q: not a directory", dir)
 	}
 	return nil
 }

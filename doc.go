@@ -196,7 +196,8 @@
 // to pick the glibc or musl build. It never changes the working directory,
 // installs no signal handler, never touches the standard streams, and never
 // reads OPENGREP_BIN or SEMGREP_RULES, which only the gogrep command
-// honours. Every directory argument must be absolute.
+// honours. Every directory argument must be the absolute path of an
+// existing directory.
 //
 // # Errors
 //
@@ -206,14 +207,16 @@
 //   - a [*SelectionError], [ErrNoRules] or an error wrapping
 //     [ErrUnknownSuite] for a bad selection;
 //   - an error wrapping [ErrNoOpengrep], or an [*IntegrityError], when no
-//     usable opengrep is found;
+//     usable opengrep is found or it cannot be started;
 //   - an [*ExitError] when opengrep exits non-zero, with the
 //     [ExitError].Result it still wrote, if any;
 //   - an [*OutputError], which is [ErrNoSARIF], when it exits 0 without a
 //     valid SARIF log;
 //   - an error wrapping [ErrNoTestRoot] from Test and AcceptTests for a
 //     project without rule test fixtures;
-//   - an error wrapping ctx.Err() when the context ends a call.
+//   - an error wrapping ctx.Err() when the context ends a call;
+//   - a plain error for an invalid argument, such as a directory that is
+//     relative, missing or not a directory, which names it.
 //
 // The gogrep command exits with opengrep's code after a scan, 1 when it
 // finds no opengrep, 2 for a bad selection or usage, and 130 when

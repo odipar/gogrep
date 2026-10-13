@@ -134,9 +134,11 @@ type Diagnostic struct {
 // exits 0 with a valid SARIF log, whatever it found. Otherwise it returns a
 // nil *Result and one of: a *SelectionError or ErrNoRules for a bad
 // selection; an error wrapping ErrNoOpengrep, or an *IntegrityError, when no
-// usable opengrep is found; an *ExitError when opengrep exits non-zero; an
-// *OutputError, which is ErrNoSARIF, when it exits 0 without a valid log; or
-// an error wrapping ctx.Err().
+// usable opengrep is found or it cannot be started; an *ExitError when
+// opengrep exits non-zero; an *OutputError, which is ErrNoSARIF, when it
+// exits 0 without a valid log; an error wrapping ctx.Err(); or a plain error
+// for an invalid argument, such as a dir that is missing or not a directory,
+// which names dir, or for a CacheDir it cannot write.
 func (e *Engine) Scan(ctx context.Context, dir string, opts *ScanOptions) (*Result, error) {
 	if opts == nil {
 		opts = &ScanOptions{}
@@ -181,6 +183,8 @@ func (e *Engine) Scan(ctx context.Context, dir string, opts *ScanOptions) (*Resu
 	case errors.As(err, &exitErr):
 		res, _ := result(stdout.Bytes(), n, tail.buf)
 		return nil, &ExitError{Code: exitErr.ExitCode(), Stderr: tail.buf, Result: res}
+	case errors.As(err, new(*opengrep.StartError)):
+		return nil, startError(dir, err)
 	case err != nil:
 		return nil, err
 	}

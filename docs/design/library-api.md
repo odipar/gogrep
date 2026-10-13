@@ -464,10 +464,10 @@ type Config struct {
 // An Engine is safe for concurrent use by multiple goroutines. No method
 // reads or changes the process's working directory, signal dispositions or
 // standard streams, and none reads environment variables beyond the
-// defaults Config documents. Every directory argument must be absolute.
-// Methods that run opengrep take a context: when it is done, they kill the
-// opengrep processes they started, with every process those started, and
-// return an error that wraps ctx.Err().
+// defaults Config documents. Every directory argument must be the absolute
+// path of an existing directory. Methods that run opengrep take a context:
+// when it is done, they kill the opengrep processes they started, with every
+// process those started, and return an error that wraps ctx.Err().
 type Engine struct{ /* unexported */ }
 
 // New returns an Engine for cfg. It runs nothing and reads no file: opengrep
@@ -703,9 +703,11 @@ type ScanOptions struct {
 // exits 0 with a valid SARIF log, whatever it found. Otherwise it returns a
 // nil *Result and one of: a *SelectionError or ErrNoRules for a bad
 // selection; an error wrapping ErrNoOpengrep, or an *IntegrityError, when no
-// usable opengrep is found; an *ExitError when opengrep exits non-zero; an
-// *OutputError, which is ErrNoSARIF, when it exits 0 without a valid log; or
-// an error wrapping ctx.Err().
+// usable opengrep is found or it cannot be started; an *ExitError when
+// opengrep exits non-zero; an *OutputError, which is ErrNoSARIF, when it
+// exits 0 without a valid log; an error wrapping ctx.Err(); or a plain error
+// for an invalid argument, such as a dir that is missing or not a directory,
+// which names dir, or for a CacheDir it cannot write.
 func (e *Engine) Scan(ctx context.Context, dir string, opts *ScanOptions) (*Result, error)
 
 // A Result is what one scan found.
@@ -827,9 +829,11 @@ func (e *Engine) Command(ctx context.Context, dir string, opts *CommandOptions, 
 
 // Run starts the command and waits for it. It returns nil when opengrep
 // exits 0; an *ExitError, with nil Stderr and Result, when it exits
-// non-zero; an error wrapping ErrNoOpengrep when it cannot start; and an
-// error wrapping ctx.Err() when ctx ended it. Run reads nothing opengrep
-// writes: interpreting its output, SARIF included, is up to the caller.
+// non-zero; an error naming Dir when opengrep cannot run there, as it is
+// missing or not a directory; an error wrapping ErrNoOpengrep when it cannot
+// start otherwise; and an error wrapping ctx.Err() when ctx ended it. Run
+// reads nothing opengrep writes: interpreting its output, SARIF included, is
+// up to the caller.
 func (c *Cmd) Run() error
 
 // ================================================================ rule tests
