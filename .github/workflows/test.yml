@@ -67,7 +67,7 @@ jobs:
           mkdir -p "$cold"
           pids=()
           for i in 1 2 3 4; do
-            HOME="$cold" XDG_CACHE_HOME="$cold" LocalAppData="$cold" \
+            HOME="$cold" XDG_CACHE_HOME="$cold" LOCALAPPDATA="$cold" \
               "$RUNNER_TEMP/bin/gogrep" scan --sarif . > "$cold/$i.sarif" 2> "$cold/$i.err" &
             pids+=($!)
           done
@@ -86,6 +86,7 @@ jobs:
           fi
           if [ -z "$ready" ]; then
             echo "::error::gogrep prepared no runtime in its cache"
+            find "$cold" -maxdepth 4
             failed=1
           fi
           echo "prepared: $ready"

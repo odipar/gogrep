@@ -278,7 +278,7 @@ func TestRunFirstAlone(t *testing.T) {
 				t.Errorf("process %d printed %q, %v; want %q", i, outs[i], errs[i], want)
 			}
 		}
-		checkPrepared(t, dir, sum, strings.Fields(string(outs[0]) + " .")[0])
+		checkPrepared(t, dir, sum, strings.TrimSuffix(string(outs[0]), " <nil>\n"))
 	})
 }
 

@@ -199,6 +199,12 @@ func TestSelectionErrors(t *testing.T) {
 		"suites/bad.yaml":                               "- frobnicate: x\n",
 	})
 	e := newEngine(t, Config{})
+	// The operating system's words for a missing file.
+	_, err := os.ReadFile(filepath.Join(dir, "suites", "missing.yaml"))
+	var notExist *fs.PathError
+	if !errors.As(err, &notExist) {
+		t.Fatalf("reading a missing file: %v", err)
+	}
 	tests := []struct {
 		sel   Selection
 		kind  string
@@ -208,7 +214,7 @@ func TestSelectionErrors(t *testing.T) {
 	}{
 		{Selection{Suites: []string{"web"}}, "suite", "web", ErrUnknownSuite, `unknown suite "web"`},
 		{Selection{Suites: []string{"suites/imports.yaml"}}, "suite", "web", ErrUnknownSuite, `suite suites/imports.yaml: unknown suite "web"`},
-		{Selection{Suites: []string{"suites/missing.yaml"}}, "suite", "suites/missing.yaml", fs.ErrNotExist, "open suites/missing.yaml: no such file or directory"},
+		{Selection{Suites: []string{"suites/missing.yaml"}}, "suite", "suites/missing.yaml", fs.ErrNotExist, "open suites/missing.yaml: " + notExist.Err.Error()},
 		{Selection{Suites: []string{"suites/bad.yaml"}}, "suite", "suites/bad.yaml", nil,
 			"suite suites/bad.yaml: instruction 1 (frobnicate): unknown instruction; want description, rules, import, include or exclude"},
 		{Selection{Rules: []string{"use-of-md6"}}, "rule", "use-of-md6", ErrNoRules, "rule use-of-md6 matches no rule"},
