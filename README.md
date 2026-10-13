@@ -357,7 +357,7 @@ diagnostics
 
 | Stage | Meaning |
 |---|---|
-| `SETUP` | The fixture is malformed, e.g. it has no samples, its `rule.ref` is empty, or it has a misspelt `expected.text`. gogrep does not follow symlinks, so a symlink anywhere under `opengrep/gogrep/rules/test/` fails at `SETUP` too. |
+| `SETUP` | The fixture is malformed, e.g. it has no samples, its `rule.ref` is empty, or it has a misspelt `expected.text`. gogrep does not follow symlinks, so a symlink to a directory anywhere under `opengrep/gogrep/rules/test/` (outside a fixture) fails at `SETUP` too, rather than silently skipping the fixtures behind it. Inside a fixture, any symlink fails. |
 | `RULE` | `rule.ref` matches no rule or several, or opengrep rejects the rule. |
 | `RUN` | opengrep failed, or its output cannot be trusted. |
 | `RESULT` | `expected.txt` is missing or differs. |
@@ -444,7 +444,9 @@ pass through. That annotation-based runner is still available as
   does the same explicitly.
 - **Your own `--config`:** `gogrep scan --config auto .` or
   `--config my-rules/` is passed to opengrep untouched. `--config auto`
-  downloads rules from semgrep.dev and so needs internet.
+  downloads rules from semgrep.dev and so needs internet. Adding `--suite`
+  or `--rule` runs the selected bundled rules as well, as if you had also
+  passed `--config bundled`.
 - **Rule sets:**
   - `opengrep-rules`, `0xdea` and `semgrep-go`: third-party rules, each
     pinned to a git commit in [opengrep.json](opengrep.json).
@@ -453,10 +455,10 @@ pass through. That annotation-based runner is still available as
     except `test/` (in any letter case), which holds
     [rule test fixtures](#5-test-custom-rules) and is never loaded as rules.
     Scans that run gogrep's rules (no `--config`, `-e` or `$SEMGREP_RULES`,
-    or `--config bundled`) skip it. A scan with your own `--config` scans
-    it like any other directory: opengrep's default ignores skip `test/`,
-    but a project `.semgrepignore` replaces them, so add
-    `opengrep/gogrep/rules/test/` to it. Point `--config` at single rule
+    or `--config bundled`, `--suite` or `--rule`) skip it. A scan with only
+    your own `--config` scans it like any other directory: opengrep's
+    default ignores skip `test/`, but a project `.semgrepignore` replaces
+    them, so add `opengrep/gogrep/rules/test/` to it. Point `--config` at single rule
     files rather than at `opengrep/gogrep/rules`, which would load YAML
     samples in fixtures as rules, or use `--gogrep-ruleset project`.
 - **Rule ids** are stable (`<rule set>.<directory>.<rule id>`), so results

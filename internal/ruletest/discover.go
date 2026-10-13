@@ -39,12 +39,13 @@ type Fixture struct {
 // sorted by name. A path selects the fixtures below it and the fixture that
 // contains it; no paths select every fixture. A directory outside every
 // fixture that has an expected.txt or actual.txt is returned as a fixture
-// that fails at SETUP, and so are a symlink outside every fixture, which
-// would hide the fixtures it leads to, and a fixture that breaks a rule of
-// the design's §2.3. It is an error when root is not a directory or is
-// spelled in another letter case, when a directory next to it bears its name
-// in another letter case, when a path does not exist, lies outside root or
-// selects no test, or when there are no tests at all.
+// that fails at SETUP, and so are a symlink to a directory outside every
+// fixture, which would hide the fixtures it leads to, and a fixture that
+// breaks a rule of the design's §2.3. It is an error when root is not a
+// directory or its last element is spelled in another letter case, when a
+// directory next to it bears its name in another letter case, when a path
+// does not exist, lies outside root or selects no test, or when there are no
+// tests at all.
 func Discover(root string, paths []string) ([]*Fixture, error) {
 	t := &tree{root: root, name: path.Clean(filepath.ToSlash(root)), entries: map[string]fs.DirEntry{}}
 	// On a case-insensitive file system the root could be a Test
@@ -130,16 +131,21 @@ func Discover(root string, paths []string) ([]*Fixture, error) {
 		}
 	}
 	// The walk does not follow symlinks, so the fixtures behind a symlinked
-	// fixture or namespace directory would silently not run.
+	// fixture or namespace directory would silently not run. A symlink to a
+	// file (a shared go.mod or .gitattributes) hides no fixture.
 	for _, p := range t.paths {
 		if t.entries[p].Type()&fs.ModeSymlink == 0 ||
-			slices.ContainsFunc(t.fixtures, func(dir string) bool { return within(p, dir) }) || !pick(p) {
+			slices.ContainsFunc(t.fixtures, func(dir string) bool { return within(p, dir) }) {
+			continue
+		}
+		dir := filepath.Join(root, filepath.FromSlash(p))
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() || !pick(p) {
 			continue
 		}
 		out = append(out, &Fixture{
 			Name:  t.display(p),
-			Dir:   filepath.Join(root, filepath.FromSlash(p)),
-			Setup: fmt.Errorf("symlinks are not supported in the test root: %s", p),
+			Dir:   dir,
+			Setup: fmt.Errorf("symlinks to directories are not supported in the test root: %s", p),
 		})
 	}
 	// A path that selects nothing is an error even next to others that

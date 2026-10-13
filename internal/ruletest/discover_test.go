@@ -151,7 +151,15 @@ func fixtureTree(t *testing.T) []summary {
 			t.Logf("not testing symlinks: %v", err)
 			continue
 		}
-		want = append(want, summary{Name: root + l.name, Setup: "symlinks are not supported in the test root: " + l.name})
+		want = append(want, summary{Name: root + l.name, Setup: "symlinks to directories are not supported in the test root: " + l.name})
+	}
+	// Symlinks to files, or to nothing, hide no fixture and are ignored like
+	// any other file outside the fixtures.
+	writeTree(t, shared, map[string]string{"go.mod": "module fixtures\n"})
+	for _, l := range []struct{ name, target string }{{"linked-go.mod", filepath.Join(shared, "go.mod")}, {"dangling", filepath.Join(shared, "nope")}} {
+		if err := os.Symlink(l.target, filepath.Join(testRoot, l.name)); err != nil {
+			t.Logf("not testing symlinks: %v", err)
+		}
 	}
 	if runtime.GOOS != "windows" {
 		writeTree(t, testRoot, map[string]string{"setup/socket/rule.ref": "x\n", "setup/socket/a.go": "package a\n"})

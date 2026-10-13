@@ -370,8 +370,8 @@ func TestRunSymlinkedFixture(t *testing.T) {
 		t.Skipf("cannot create symlinks: %v", err)
 	}
 	r := newFakeRunner()
-	test := &Test{Fixture: &Fixture{Name: "test/link", Dir: link, Setup: errors.New("symlinks are not supported in the test root: link")}}
-	const want = "Executing 1 tests.\n[1/1] FAILED(SETUP) test/link\n  symlinks are not supported in the test root: link\n0 tests passed; 1 tests failed:\n  FAILED: test/link\n"
+	test := &Test{Fixture: &Fixture{Name: "test/link", Dir: link, Setup: errors.New("symlinks to directories are not supported in the test root: link")}}
+	const want = "Executing 1 tests.\n[1/1] FAILED(SETUP) test/link\n  symlinks to directories are not supported in the test root: link\n0 tests passed; 1 tests failed:\n  FAILED: test/link\n"
 	if code, stdout, stderr := r.run(context.Background(), []*Test{test}); code != 1 || stdout != want || stderr != "" {
 		t.Errorf("Run = %d, stderr %q, stdout\n%s\nwant 1, no stderr, stdout\n%s", code, stderr, stdout, want)
 	}
