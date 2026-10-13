@@ -46,8 +46,9 @@ type Fixture struct {
 // root or selects no test, or when there are no tests at all.
 func Discover(root string, paths []string) ([]*Fixture, error) {
 	t := &tree{root: root, name: path.Clean(filepath.ToSlash(root)), entries: map[string]fs.DirEntry{}}
-	// A case-insensitive file system would find a Test directory here,
-	// which scans then do not exclude, as other file systems do not.
+	// On a case-insensitive file system the root could be a Test
+	// directory, which scans do not exclude. Refuse it, as case-sensitive
+	// file systems do.
 	siblings, _ := os.ReadDir(filepath.Dir(root))
 	for _, e := range siblings {
 		if base := filepath.Base(root); e.Name() != base && strings.EqualFold(e.Name(), base) {
