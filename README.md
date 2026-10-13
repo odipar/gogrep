@@ -284,7 +284,10 @@ $ echo $?
 
 If the change is intended, run `gogrep test accept`, or `gogrep test --learn`,
 which writes `expected.txt` right away and prints the diff under `LEARNED`.
-Review the change to `expected.txt` like code.
+Review the change to `expected.txt` like code. `accept` promotes every
+`actual.txt` under the paths it is given, whichever run wrote it, and a run
+removes `actual.txt` only from the fixtures it includes; so after a run
+limited to some paths, give `accept` the same paths.
 
 **How `rule.ref` finds its rule.** gogrep looks the reference up in three
 ways, which together must find exactly one rule:

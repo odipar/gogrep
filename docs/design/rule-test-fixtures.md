@@ -505,6 +505,7 @@ Executing 4 tests.
 
 - For each selected fixture that has `actual.txt`, gogrep renames it to `expected.txt` (replacing the old file), sets the mode to 0o600, and prints `Accepted <fixture>`.
 - Fixtures without `actual.txt` are skipped silently, as in CodeQL. So are fixtures that fail at `SETUP`: `gogrep test` deletes their `actual.txt`, so any left is stale.
+- `accept` does not check which run wrote an `actual.txt`. A run deletes `actual.txt` only in the fixtures it includes (§6.4), so after `gogrep test a` and then `gogrep test b`, `gogrep test accept` still promotes the `actual.txt` that the first run left in `a`. Pass `accept` the paths of the run whose results were reviewed.
 - It never loads rules and never runs opengrep.
 - It exits 0, or 2 on a usage error or a failed rename.
 
@@ -582,7 +583,7 @@ In descriptions, each line of stderr is prefixed with `> `, blank lines at the s
 | File | When | How |
 |---|---|---|
 | `actual.txt` | The fixture fails at `RESULT`: without `--learn`, or with `--learn` when `expected.txt` could not be read or written. | Written atomically, 0o600. |
-| `actual.txt` (stale) | Deleted whenever the fixture does **not** fail at `RESULT` (passed, learned, `SETUP`, `RULE`, `RUN`), so `accept` can never promote stale output. | — |
+| `actual.txt` (stale) | Deleted whenever a run includes the fixture and it does **not** fail at `RESULT` (passed, learned, `SETUP`, `RULE`, `RUN`), so `accept` never promotes output older than the latest run that included the fixture. A run that leaves the fixture out (other paths, a selection flag, an interrupt before it) leaves its `actual.txt` alone (§5.5). | — |
 | `expected.txt` | Written by `--learn` for a `RESULT` failure, or renamed from `actual.txt` by `accept`. | Atomic write or rename, then 0o600. |
 | `actual.sarif` | Written with `--keep-sarif` for every fixture whose opengrep run produced output. A stale one is deleted otherwise. | Written atomically, 0o600. |
 
