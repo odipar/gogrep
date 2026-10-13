@@ -157,15 +157,54 @@ func withRules(args []string, sel selection) ([]string, error) {
 	return slices.Concat(out[:1], own, out[1:]), nil
 }
 
+var errNoRules = errors.New("the --suite/--rule/--gogrep-* selection matches no rules")
+
 // resolve returns the rules sel selects: the union of its suites and rules
 // (or the default suite), narrowed by its filters.
 func (sel selection) resolve(env *suite.Env) ([]*rules.Rule, error) {
-	var picked []*rules.Rule
-	suites := sel.suites
 	if !sel.explicit {
-		suites = []string{defaultSuite}
+		sel.suites = []string{defaultSuite}
 	}
-	for _, name := range suites {
+	picked, err := sel.union(env)
+	if err != nil {
+		return nil, err
+	}
+	picked = suite.Narrow(picked, sel.narrow...)
+	if len(picked) == 0 {
+		return nil, errNoRules
+	}
+	return picked, nil
+}
+
+// filter returns the ids of the rules sel selects for gogrep test, which has
+// no default suite: the union of its suites and rules, or every rule when it
+// names none, narrowed by its filters. active is false when sel has no
+// selection flags at all, and so selects every rule.
+func (sel selection) filter(env *suite.Env) (ids map[string]bool, active bool, err error) {
+	if !sel.explicit && len(sel.narrow) == 0 {
+		return nil, false, nil
+	}
+	picked := allRules(env)
+	if sel.explicit {
+		if picked, err = sel.union(env); err != nil {
+			return nil, true, err
+		}
+	}
+	picked = suite.Narrow(picked, sel.narrow...)
+	if len(picked) == 0 {
+		return nil, true, errNoRules
+	}
+	ids = map[string]bool{}
+	for _, r := range picked {
+		ids[r.ID] = true
+	}
+	return ids, true, nil
+}
+
+// union returns the rules that sel's suites and rules select, sorted by id.
+func (sel selection) union(env *suite.Env) ([]*rules.Rule, error) {
+	var picked []*rules.Rule
+	for _, name := range sel.suites {
 		s, err := env.Load(name)
 		if err != nil {
 			return nil, err
@@ -183,11 +222,7 @@ func (sel selection) resolve(env *suite.Env) ([]*rules.Rule, error) {
 		}
 		picked = append(picked, rs...)
 	}
-	picked = suite.Narrow(dedupe(picked), sel.narrow...)
-	if len(picked) == 0 {
-		return nil, errors.New("the --suite/--rule/--gogrep-* selection matches no rules")
-	}
-	return picked, nil
+	return dedupe(picked), nil
 }
 
 // ruleByID selects rules whose qualified id is id, ends in "."+id, or
@@ -201,15 +236,20 @@ func ruleByID(env *suite.Env, id string) ([]*rules.Rule, error) {
 	if err != nil {
 		return nil, fmt.Errorf("--rule %s: %w", id, err)
 	}
-	var all []*rules.Rule
-	for _, set := range slices.Sorted(maps.Keys(env.Sets)) {
-		all = append(all, env.Sets[set]...)
-	}
-	rs := suite.Narrow(all, f)
+	rs := suite.Narrow(allRules(env), f)
 	if len(rs) == 0 {
 		return nil, fmt.Errorf("--rule %s matches no rule; list them with: gogrep rules --suite all", id)
 	}
 	return rs, nil
+}
+
+// allRules returns every rule in env, by rule set name.
+func allRules(env *suite.Env) []*rules.Rule {
+	var all []*rules.Rule
+	for _, set := range slices.Sorted(maps.Keys(env.Sets)) {
+		all = append(all, env.Sets[set]...)
+	}
+	return all
 }
 
 func dedupe(rs []*rules.Rule) []*rules.Rule {

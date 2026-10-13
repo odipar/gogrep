@@ -1,0 +1,39 @@
+Executing 14 tests.
+[1/14] FAILED(RULE) opengrep/gogrep/rules/test/broken/ambiguous
+  rule reference "go.no-exec-command" is ambiguous: project.broken.go.no-exec-command, project.go.no-exec-command; write the full id
+[2/14] FAILED(SETUP) opengrep/gogrep/rules/test/broken/empty
+  no code samples
+[3/14] FAILED(SETUP) opengrep/gogrep/rules/test/broken/orphan
+  expected.txt has no rule.ref next to it
+[4/14] FAILED(SETUP) opengrep/gogrep/rules/test/broken/outer
+  fixture contains nested fixture opengrep/gogrep/rules/test/broken/outer/inner
+[5/14] FAILED(SETUP) opengrep/gogrep/rules/test/broken/outer/inner
+  fixture is nested inside opengrep/gogrep/rules/test/broken/outer
+[6/14] FAILED(RULE) opengrep/gogrep/rules/test/broken/pattern
+  Rule parse error: Rule parse error in rule project.broken.unclosed:
+   Invalid pattern for Go: Parsing_error.Lexical_error (look_close_paren, _NOT_A_FILE_:1:12 "(")
+  ----- pattern -----
+  exec.Command($CMD, ...
+  ----- end pattern -----
+[7/14] FAILED(RULE) opengrep/gogrep/rules/test/broken/schema
+  InvalidRuleSchemaError: One of these properties is missing: 'message'
+  SemgrepError: invalid configuration file found (1 configs were invalid)
+[8/14] FAILED(SETUP) opengrep/gogrep/rules/test/broken/typo
+  unknown regression file expected.text; the expected file is expected.txt
+[9/14] FAILED(RULE) opengrep/gogrep/rules/test/broken/unknown
+  rule reference "no-such-rule" matches no rule; list candidates with: gogrep rules --rule '/no-such-rule/'
+[10/14] PASSED opengrep/gogrep/rules/test/generic/todo-marker
+[11/14] PASSED opengrep/gogrep/rules/test/go/exec-command
+[12/14] PASSED opengrep/gogrep/rules/test/go/exec-command-in-prod
+[13/14] PASSED opengrep/gogrep/rules/test/go/exec-command-layout
+[14/14] PASSED opengrep/gogrep/rules/test/go/exec-command-partial
+5 tests passed; 9 tests failed:
+  FAILED: opengrep/gogrep/rules/test/broken/ambiguous
+  FAILED: opengrep/gogrep/rules/test/broken/empty
+  FAILED: opengrep/gogrep/rules/test/broken/orphan
+  FAILED: opengrep/gogrep/rules/test/broken/outer
+  FAILED: opengrep/gogrep/rules/test/broken/outer/inner
+  FAILED: opengrep/gogrep/rules/test/broken/pattern
+  FAILED: opengrep/gogrep/rules/test/broken/schema
+  FAILED: opengrep/gogrep/rules/test/broken/typo
+  FAILED: opengrep/gogrep/rules/test/broken/unknown

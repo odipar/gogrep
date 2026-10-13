@@ -397,7 +397,7 @@ gogrep test [run] [flags] [path...]
 gogrep test accept [path...]
 ```
 
-- `run` is the default subcommand.
+- `run` is the default subcommand. `run` and `accept` are subcommands only as the first argument after `test`.
 - **Path arguments.** Paths may be relative or absolute, written with `/` or `\`. Each must lie inside `opengrep/gogrep/rules/test` relative to the cwd after cleaning:
   - a directory selects every fixture under it, searched recursively, or the fixture that contains it;
   - a file (`rule.ref`, `expected.txt`, a sample) selects the fixture that contains it.
@@ -422,8 +422,8 @@ gogrep test accept [path...]
 | `-h`, `--help` | Print usage and exit 0. |
 
 - **Flag syntax.** Flags may come before or after paths, as `--x v` or `--x=v`.
-- **Unknown flags.** An unknown flag exits 2 with `unknown flag <f>; gogrep test does not forward flags to opengrep`.
-- **`accept`.** It takes paths only. A selection flag given to `accept` exits 2.
+- **Unknown flags.** An unknown flag exits 2 with `unknown flag <f>; gogrep test does not forward flags to opengrep`. Every argument that starts with `-` is a flag; `-j` and `--threads` take the next argument as their value even when it starts with `-`.
+- **`accept`.** It takes paths only, plus `-h`. Any other flag given to `accept`, a selection flag included, exits 2.
 
 Usage text:
 
@@ -519,7 +519,7 @@ Executing 4 tests.
 1. **Discover.** Parse the arguments (selection flags are already stripped by `gogrepFlags`). Find fixtures under the selected paths, sort them bytewise by slash path, and run the §2.3 checks, which include parsing `rule.ref`. Sample lists are slash paths relative to the fixture, sorted bytewise.
 2. **Load.** Call `loadEnv()` once. A failure exits 2.
 3. **Resolve, sequentially.** Resolve every parsed `rule.ref` (§3.2), then apply the selection filter (§5.3). `SETUP` and `RULE` failures found here never start opengrep.
-4. **Prepare, sequentially.** Call `opengrepBin()` once, which may extract the bundled binary; an error exits 2. Then call `rules.Write([]*rules.Rule{r})` once for each distinct resolved rule. This produces an absolute, content-addressed, 0o600 config in which `id` is already the qualified id. An error exits 2.
+4. **Prepare, sequentially.** When at least one test reaches opengrep, call `opengrepBin()` once, which may extract the bundled binary; an error exits 2. A run in which every test fails at `SETUP` or `RULE` needs no opengrep. Then call `rules.Write([]*rules.Rule{r})` once for each distinct resolved rule. This produces an absolute, content-addressed, 0o600 config in which `id` is already the qualified id. An error exits 2.
 5. **Run.** A pool of `-j` workers runs one opengrep process per fixture (§6.2) and classifies each result (§6.3).
 6. **Report, sequentially and in sorted order.** Render the table, compare it, write or delete `actual.txt`, `expected.txt` and `actual.sarif` (§6.4), and print each fixture's report. Then print the summary and the untested-rules warning, and exit.
 
@@ -682,9 +682,10 @@ There are no `_test.go` files today. All new tests use the standard `testing` pa
   - interrupts: no writes and exit 130.
 - **package main:** routing of `test` and `opengrep` (the pass-through keeps `--rule`); test flag parsing (`-j 0`, `-j -2`, `--threads=3`, flags after paths, unknown flag → 2); `withRules` appending `--exclude`; `selection.filter`.
 
-**Integration tests** (`testcmd_test.go`). They are skipped under `-short` or when `opengrepBin()` fails, and run in CI with `-tags bundled`.
+**Integration tests** (`testcmd_test.go`). They are skipped under `-short`, when `opengrepBin()` fails, or when `opengrep --version` is not the version `opengrep.json` pins (the golden files hold that version's output, so another opengrep on `$PATH` in an unbundled build skips rather than fails). They run in CI with `-tags bundled`.
 
-- **Setup.** Each test copies `testdata/project/` to `t.TempDir()` and calls `t.Chdir` (not combinable with `t.Parallel`). It runs `run([]string{"test", …}, &out, &errb)` and compares stdout with golden files in `testdata/golden/`; a `-update` test flag rewrites them.
+- **Setup.** Each test copies `testdata/project/` to `t.TempDir()`, leaving out any `actual.txt` and `actual.sarif` from manual runs, and calls `t.Chdir` (not combinable with `t.Parallel`). It runs `run([]string{"test", …}, &out, &errb)` and compares stdout with golden files in `testdata/golden/`; a `-update` test flag rewrites them. The golden files hold a bundled build's output; in an unbundled build the test drops the `; this gogrep build has no bundled rule sets` hint before comparing.
+- **Cache.** The tests use the real user cache directory. An isolated `HOME` would make opengrep unpack its runtime (about 245 MB, §6.5) again for every test.
 - **Cases:**
   1. the tree as committed: exit 0;
   2. `expected.txt` removed: `RESULT`, `Cannot find expected.txt.`, and `actual.txt` written with mode 0o600;
@@ -714,9 +715,9 @@ testdata/project/opengrep/gogrep/rules/
     ├── go.mod                         # module fixtures
     ├── go/exec-command/               # §2.4 exactly: rule.ref, expected.txt, sample.go, safe.go, sub/runner_test.go
     ├── go/exec-command-partial/       # adds sub/broken.go: the diagnostics set
-    ├── go/exec-command-layout/        # rule.ref = full id; vendor/v.go, .hidden/h.go, -dash.go, crlf.go (CRLF)
+    ├── go/exec-command-layout/        # rule.ref = full id; vendor/v.go, .hidden/h.go, -dash.go, crlf.go (CRLF), lf.go (crlf.go with LF)
     ├── go/exec-command-in-prod/       # paths: rule; a.go matches, a_test.go excluded
-    └── generic/todo-marker/           # notes.txt and notes.yaml (invalid YAML with a rules: key); expected.txt contains "TODO"
+    └── generic/todo-marker/           # notes.txt and notes.yaml (invalid YAML with a rules: key); expected.txt and rule.ref contain "TODO"
 ```
 
 Together these fixtures prove the following:
@@ -726,10 +727,12 @@ Together these fixtures prove the following:
 - a rule's `paths:` sees fixture-relative paths;
 - a full-id reference resolves;
 - YAML under `test/` is never loaded as rules;
-- a generic rule never matches `expected.txt`;
-- non-ASCII messages survive.
+- a generic rule never matches `expected.txt` or `rule.ref`;
+- non-ASCII messages survive, and columns count UTF-8 bytes (`notes.txt`).
 
 `exec-command` doubles as the README demo.
+
+`crlf.go` and `sub/broken.go` are deliberately not gofmt-clean (CRLF line ends, a syntax error), so `gofmt -l .` lists them; a formatting check must skip `testdata/`.
 
 ### 7.5 CI
 

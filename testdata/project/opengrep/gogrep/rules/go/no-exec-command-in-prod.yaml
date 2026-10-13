@@ -1,0 +1,8 @@
+rules:
+  - id: no-exec-command-in-prod
+    languages: [go]
+    severity: WARNING
+    message: Avoid running $CMD with exec.Command outside tests
+    pattern: exec.Command($CMD, ...)
+    paths:
+      exclude: ["*_test.go"]

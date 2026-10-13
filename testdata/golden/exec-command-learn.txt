@@ -1,0 +1,9 @@
+Executing 1 tests.
+[1/1] LEARNED opengrep/gogrep/rules/test/go/exec-command
+--- expected
++++ actual
+@@ -1,3 +1,1 @@
+-| sample.go:6:2:6:26 | Avoid running name with exec.Command |
+ | sample.go:7:6:7:24 | Avoid running "ls" with exec.Command |
+-| sub/runner_test.go:5:18:5:44 | Avoid running "go" with exec.Command |
+All 1 tests passed (1 learned).

@@ -1,11 +1,15 @@
 package main
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/odipar/gogrep/internal/rules"
+	"github.com/odipar/gogrep/internal/suite"
 )
 
 const noExecRule = `rules:
@@ -119,4 +123,65 @@ func TestWithRules(t *testing.T) {
 			t.Errorf("withRules(%q) = %q, %v; want it unchanged", args, got, err)
 		}
 	})
+}
+
+func TestSelectionFilter(t *testing.T) {
+	rule := func(id, lang string) []byte {
+		return []byte("rules:\n  - id: " + id + "\n    languages: [" + lang + "]\n    severity: WARNING\n    message: m\n    pattern: f()\n")
+	}
+	parsed, err := rules.Parse(map[string]rules.Set{
+		"project": {
+			"go/no-exec-command.yaml":  rule("no-exec-command", "go"),
+			"go/no-os-exit.yaml":       rule("no-os-exit", "go"),
+			"generic/todo-marker.yaml": rule("todo-marker", "generic"),
+		},
+		"bundled": {"go/x.yaml": rule("x", "go")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := &suite.Env{
+		Sets:   map[string][]*rules.Rule{},
+		Groups: map[string][]string{"all": {"bundled", "project"}},
+		Load:   loadSuite,
+	}
+	for _, r := range parsed {
+		env.Sets[r.Set] = append(env.Sets[r.Set], r)
+	}
+
+	tests := []struct {
+		args   []string
+		want   []string // the selected ids; nil when the selection is not active
+		errMsg string
+	}{
+		{nil, nil, ""},
+		{[]string{"--rule", "no-exec-command"}, []string{"project.go.no-exec-command"}, ""},
+		{[]string{"--rule=no-exec-command,todo-marker"}, []string{"project.generic.todo-marker", "project.go.no-exec-command"}, ""},
+		{[]string{"--gogrep-lang", "go"}, []string{"bundled.go.x", "project.go.no-exec-command", "project.go.no-os-exit"}, ""},
+		{[]string{"--suite", "all", "--gogrep-lang=generic"}, []string{"project.generic.todo-marker"}, ""},
+		{[]string{"--rule", "nope"}, nil, "--rule nope matches no rule; list them with: gogrep rules --suite all"},
+		{[]string{"--rule", "no-exec-command", "--gogrep-lang", "generic"}, nil, "the --suite/--rule/--gogrep-* selection matches no rules"},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			_, sel, err := gogrepFlags(tt.args)
+			if err != nil {
+				t.Fatalf("gogrepFlags: %v", err)
+			}
+			ids, active, err := sel.filter(env)
+			if tt.errMsg != "" {
+				if err == nil || err.Error() != tt.errMsg {
+					t.Errorf("filter(%q) error = %v, want %q", tt.args, err, tt.errMsg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("filter(%q): %v", tt.args, err)
+			}
+			got := slices.Sorted(maps.Keys(ids))
+			if active != (tt.want != nil) || !slices.Equal(got, tt.want) {
+				t.Errorf("filter(%q) = %q, %v; want %q, %v", tt.args, got, active, tt.want, tt.want != nil)
+			}
+		})
+	}
 }

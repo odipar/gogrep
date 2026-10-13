@@ -1,0 +1,3 @@
+# The worked example plus a sample that does not parse: opengrep reports
+# a syntax error, which expected.txt records under diagnostics.
+no-exec-command

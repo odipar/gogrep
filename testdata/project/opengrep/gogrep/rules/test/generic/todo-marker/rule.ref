@@ -1,0 +1,2 @@
+# todo-marker finds TODO in the samples, never in expected.txt or this file.
+todo-marker

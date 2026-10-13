@@ -1,0 +1,6 @@
+rules:
+  - id: todo-marker
+    languages: [generic]
+    severity: INFO
+    message: Leftover TODO — finish it before the release
+    pattern: TODO

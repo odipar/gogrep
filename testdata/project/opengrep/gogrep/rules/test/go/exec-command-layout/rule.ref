@@ -1,0 +1,3 @@
+# A full id. Samples that a normal scan skips are scanned as targets, and
+# crlf.go (CRLF line ends) gives the same positions as lf.go.
+project.go.no-exec-command

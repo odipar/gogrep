@@ -1,0 +1,2 @@
+# The rule excludes *_test.go, matched against paths relative to the fixture.
+no-exec-command-in-prod

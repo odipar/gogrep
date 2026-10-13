@@ -36,6 +36,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		sub = args[0]
 	}
 	switch sub {
+	case "test":
+		return runTest(args[1:], sel, stdout, stderr)
 	case "rules":
 		err = listRules(stdout, stderr, sel)
 	case "suites":

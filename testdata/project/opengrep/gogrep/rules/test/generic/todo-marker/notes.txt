@@ -1,0 +1,3 @@
+Shopping list
+Café ☕ — TODO: order more beans
+Done: milk

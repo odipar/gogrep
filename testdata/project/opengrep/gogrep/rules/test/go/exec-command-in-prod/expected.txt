@@ -1,0 +1,1 @@
+| a.go:5:17:5:39 | Avoid running "deploy" with exec.Command outside tests |
