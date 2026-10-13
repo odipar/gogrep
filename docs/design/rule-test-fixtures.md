@@ -594,7 +594,7 @@ In descriptions, each line of stderr is prefixed with `> `, blank lines at the s
 - **Workers.** `-j` workers take fixtures in sorted order. Each worker runs `exec.CommandContext` with a short `WaitDelay`.
 - **The first run runs alone.** On its first run, opengrep 1.30.2 unpacks its Python runtime (about 245 MB) into `~/.cache/opengrep/v1.30.2/`, and a run that starts meanwhile can crash with SIGBUS. With an empty cache, two of four parallel runs died this way (exit 138), while eight parallel runs with the cache in place all succeeded (verified). CI runners start with an empty cache, so the first fixture's run ends before any other starts. This costs one run's time when the cache is already there.
 - **Interrupts.** `gogrep scan` ignores SIGINT and SIGTERM so that its single child gets Ctrl-C. `gogrep test` instead **catches** them with `signal.Notify(os.Interrupt, syscall.SIGTERM)`. When a signal arrives:
-  - gogrep cancels the context, so no new run starts and running children are killed (they normally received Ctrl-C from the terminal already);
+  - gogrep cancels the context, so no new run starts and every running opengrep is killed together with the processes it started. opengrep's launcher passes no kill on to `opengrep-cli` and `opengrep-core`, which would otherwise scan on at full CPU after gogrep exits (verified). On Unix each opengrep leads a process group of its own (`Setpgid`) and cancelling sends SIGKILL to the group, so Ctrl-C from the terminal reaches only gogrep, which then kills the group. On Windows cancelling runs `taskkill /T /F /PID <pid>`, and kills the launcher alone if that fails. After SIGINT or SIGTERM, to gogrep alone or to its whole process group, no `opengrep-cli` or `opengrep-core` was left on macOS (verified);
   - results of interrupted runs are discarded, and no files are written for them;
   - the reporter prints the fixtures that completed, in order, up to the first incomplete one, then `gogrep: interrupted` on stderr, and exits **130**.
 - **Speed.** Each run costs about 1.2 s, of which 0.8 s is opengrep's startup. Ten fixtures take about 3.1 s with 8 workers on an M2, against 12.3 s sequentially (measured). Running the first run alone adds about one run: on a busier M2, the runner took 4.2 s with 8 workers against 3.2 s without that wait, and 18.0 s sequentially (measured).
@@ -643,7 +643,7 @@ type Exec func(ctx context.Context, dir string, args []string) (stdout, stderr [
 | `files.go` | Atomic 0o600 writes, stale-file deletion, and `Accept(fixtures, stdout, stderr) int`. |
 | `report.go` | Comparing with `expected.txt`, status lines, descriptions, the summary, computing the exit code, and `WarnUntested(w, project, tests)`, which the caller calls after a full run. |
 
-**`testcmd.go` (package main).** `runTest` handles `run`/`accept` dispatch, flag parsing, usage text, `loadEnv`, `selection.filter`, `rules.Write`, `opengrepBin`, and wiring `Exec` to `exec.CommandContext` with `utf8Env`.
+**`testcmd.go` (package main).** `runTest` handles `run`/`accept` dispatch, flag parsing, usage text, `loadEnv`, `selection.filter`, `rules.Write`, `opengrepBin`, and wiring `Exec` to `exec.CommandContext` with `utf8Env`. `procgroup_unix.go` and `procgroup_windows.go` make cancelling a run kill opengrep's whole process tree (§6.5).
 
 ### 7.3 Tests for gogrep itself
 
@@ -685,7 +685,7 @@ There are no `_test.go` files today. All new tests use the standard `testing` pa
   - `accept` skipping silently;
   - written files being 0o600 (skipped on Windows);
   - interrupts: no writes and exit 130.
-- **package main:** routing of `test` and `opengrep` (the pass-through keeps `--rule`); test flag parsing (`-j 0`, `-j -2`, `--threads=3`, flags after paths, unknown flag → 2); `withRules` appending `--exclude`; `selection.filter`.
+- **package main:** cancelling a run kills a process that opengrep's stand-in started (Unix); routing of `test` and `opengrep` (the pass-through keeps `--rule`); test flag parsing (`-j 0`, `-j -2`, `--threads=3`, flags after paths, unknown flag → 2); `withRules` appending `--exclude`; `selection.filter`.
 
 **Integration tests** (`testcmd_test.go`). They are skipped under `-short`, when `opengrepBin()` fails, or when `opengrep --version` is not the version `opengrep.json` pins (the golden files hold that version's output, so another opengrep on `$PATH` in an unbundled build skips rather than fails). They run in CI with `-tags bundled`.
 

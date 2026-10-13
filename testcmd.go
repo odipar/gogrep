@@ -201,6 +201,7 @@ func testBin() (string, error) {
 func execFixture(ctx context.Context, dir string, args []string) (stdout, stderr []byte, code int, err error) {
 	var out, errb bytes.Buffer
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	killTree(cmd)
 	cmd.Dir, cmd.Env = dir, utf8Env(os.Environ())
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	cmd.WaitDelay = time.Second
