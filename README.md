@@ -28,6 +28,16 @@ chmod +x gogrep_darwin_arm64 && mv gogrep_darwin_arm64 /usr/local/bin/gogrep
 The executables are not signed. On macOS, a copy downloaded with a browser
 needs `xattr -d com.apple.quarantine gogrep` before it will run.
 
+With Go, `go install github.com/odipar/gogrep@latest` builds gogrep without
+opengrep, and `gogrep install-opengrep` downloads the opengrep release that
+gogrep pins from GitHub into gogrep's cache, checking its SHA-256 against
+[opengrep.json](opengrep.json). Without network access, fetch the release
+asset (such as `opengrep_osx_arm64` or `opengrep_manylinux_x86`) elsewhere
+and run `gogrep install-opengrep --from <file>`, or point `--base-url` at a
+mirror of the release assets. gogrep runs the opengrep it finds first:
+`$OPENGREP_BIN`, the one built into a release executable, the verified copy
+in its cache, or `opengrep` on your `PATH`.
+
 ## Usage
 
 All examples run from the root of the project being scanned. gogrep accepts
@@ -492,8 +502,9 @@ output with [testdata/golden](testdata/golden). They are skipped with
 `opengrep.json`.
 
 `go install github.com/odipar/gogrep@latest` builds gogrep without the
-opengrep binary: it has the same bundled rule sets, and runs the `opengrep`
-on your `PATH`. To move to a newer opengrep, run
+opengrep binary: it has the same bundled rule sets, and runs the opengrep
+that `gogrep install-opengrep` puts in its cache, or else the `opengrep` on
+your `PATH`. To move to a newer opengrep, run
 `go run ./tools/fetch-opengrep -pin <tag>` and commit `opengrep.json`. To
 move a rule set to another commit, change its `commit` in `opengrep.json`,
 run `go run ./tools/fetch-opengrep`, and commit `opengrep.json` with the

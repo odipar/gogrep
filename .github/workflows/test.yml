@@ -92,6 +92,17 @@ jobs:
           echo "prepared: $ready"
           exit $failed
 
+      - name: Install opengrep for a plain build, and test with it
+        # A build without gogrep_bundled finds opengrep in gogrep's cache,
+        # which is still empty here: install-opengrep fills it with the
+        # fetched asset, verified against opengrep.json, and the integration
+        # tests then run that copy.
+        run: |
+          go build -o "$RUNNER_TEMP/plain/" .
+          "$RUNNER_TEMP/plain/gogrep" install-opengrep --from "internal/bundle/bin/opengrep_$(go env GOOS)_$(go env GOARCH)"
+          "$RUNNER_TEMP/plain/gogrep" opengrep --version
+          go test ./...
+
       - name: Test
         run: go test -tags gogrep_bundled ./...
 

@@ -15,12 +15,10 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"os"
@@ -98,8 +96,9 @@ func readConfig(path string) (*pin.Pins, error) {
 	return cfg, nil
 }
 
-// fetch downloads asset a into outDir as opengrep_<os>_<arch>[_<variant>]. A
-// file already present with the pinned checksum is kept.
+// fetch downloads asset a into outDir as opengrep_<os>_<arch>[_<variant>],
+// verified as gogrep install-opengrep verifies it. A file already present
+// with the pinned checksum is kept.
 func fetch(version, platform string, a pin.Asset) error {
 	base := filepath.Join(outDir, "opengrep_"+strings.ReplaceAll(platform, "/", "_"))
 	if sum, err := opengrep.FileSHA256(base); err == nil && sum == a.SHA256 {
@@ -109,32 +108,7 @@ func fetch(version, platform string, a pin.Asset) error {
 
 	url := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", repo, version, a.Name)
 	fmt.Printf("%s: downloading %s\n", platform, url)
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: %s", url, resp.Status)
-	}
-
-	tmp, err := os.CreateTemp(outDir, ".download-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, h), resp.Body); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if sum := hex.EncodeToString(h.Sum(nil)); sum != a.SHA256 {
-		return fmt.Errorf("checksum mismatch for %s: got %s, pinned %s", a.Name, sum, a.SHA256)
-	}
-	return os.Rename(tmp.Name(), base)
+	return (&opengrep.Download{URL: url, SHA256: a.SHA256}).Fetch(context.Background(), base)
 }
 
 // repin points every asset in the config at release tag, taking checksums

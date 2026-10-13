@@ -37,9 +37,19 @@ func TestMain(m *testing.M) {
 //   - sleep sleeps for a minute;
 //   - unpack is opengrep's first run, which unpack describes;
 //   - prepare calls PrepareRuntime with its arguments, the executable, its
-//     SHA-256 and the cache directory, and prints the result.
+//     SHA-256 and the cache directory, and prints the result;
+//   - install calls Install with its arguments, the asset's URL and SHA-256
+//     and the cache directory, and prints the path.
 func helper(mode string, args []string) int {
 	switch mode {
+	case "install":
+		path, err := Install(context.Background(), args[2], &Download{URL: args[0], SHA256: args[1]}, slog.New(slog.DiscardHandler))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Println(path)
+		return 0
 	case "unpack":
 		return unpackHelper()
 	case "prepare":

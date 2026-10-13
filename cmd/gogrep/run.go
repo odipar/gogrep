@@ -56,7 +56,8 @@ func newCLI(a Assets, stdout, stderr io.Writer) (*cli, error) {
 }
 
 // run runs gogrep with args and returns its exit code. `gogrep opengrep
-// <args>` runs opengrep with args verbatim, gogrep's own flags included.
+// <args>` runs opengrep with args verbatim, gogrep's own flags included;
+// `gogrep install-opengrep` takes none of them either.
 func run(args []string, a Assets, stdout, stderr io.Writer) int {
 	c, err := newCLI(a, stdout, stderr)
 	if err != nil {
@@ -65,6 +66,9 @@ func run(args []string, a Assets, stdout, stderr io.Writer) int {
 	}
 	if len(args) > 0 && args[0] == "opengrep" {
 		return c.passThrough(args[1:])
+	}
+	if len(args) > 0 && args[0] == "install-opengrep" {
+		return c.installOpengrep(args[1:])
 	}
 	args, sel, err := gogrepFlags(args)
 	if err != nil {
