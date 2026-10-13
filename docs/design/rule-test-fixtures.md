@@ -331,7 +331,8 @@ Every cell is escaped: path, message, descriptor id and diagnostic message. Firs
 | any other character | itself |
 
 - **Why `\` is escaped.** Escaping it gives every row exactly one reading. CodeQL's handling of `\` was not established, but gogrep needs this either way.
-- **Why CRLF is normalised first.** A multi-line metavariable binding taken from a sample that git checked out with CRLF would otherwise give different expected text on Windows.
+- **Why CRLF is normalised first.** A multi-line metavariable binding taken from a sample that git checked out with CRLF would otherwise give different expected text on Windows. opengrep keeps the CR in such a binding (verified).
+- **`\xHH` is defensive.** opengrep 1.30.2 writes U+FFFD for bytes in a sample that are not UTF-8 (verified), and Go's JSON decoder does the same, so decoded SARIF never contains them.
 
 Example: the message `bad a|b` followed by a newline, a tab and `c` is written `bad a\|b\n\tc`.
 
@@ -557,7 +558,7 @@ Opengrep reports `executionSuccessful: true` even on fatal config errors (verifi
 | # | Condition | Stage | Description shown |
 |---|---|---|---|
 | 1 | The process could not start or was killed. stdout is not JSON SARIF with `version` `2.1.0` and exactly one run. A result has no location, an incomplete region, or a uri that cannot be attributed (absolute, `..`, `://`). | `RUN` | The cause, the exit code, and the last 20 stderr lines. |
-| 2 | The resolved id is not in `tool.driver.rules[].id`, or the exit code is 7 (invalid YAML or schema) or 8 (unknown language). An invalid pattern exits 2 and drops just that rule (verified). | `RULE` | Each error-level notification as `<descriptor.id>: <message>`, or the stderr tail if there are none. |
+| 2 | The exit code is 7 (invalid YAML or schema) or 8 (unknown language), or the resolved id is not in `tool.driver.rules[].id` and no error-level notification has the descriptor `SemgrepError`. An invalid pattern exits 2 with a `Rule parse error` notification and drops just that rule (verified). A missing target also exits 2 and leaves `driver.rules` empty, but its notification is a `SemgrepError` (`File not found: missing.go`, verified), so it falls through to row 3. | `RULE` | Each error-level notification as `<descriptor.id>: <message>`, or the stderr tail if there are none. |
 | 3 | Any other non-zero exit code (for example 2 with `File not found`), or any error-level notification. | `RUN` | The notifications, the exit code, and the stderr tail. |
 | 4 | A result whose `ruleId` is not the resolved id. | `RUN` | `unexpected rule id <x>` |
 | 5 | Otherwise: render the table (§4) and compare it with `expected.txt`. | `RESULT` on a mismatch | The diff. |
@@ -598,7 +599,7 @@ Opengrep reports `executionSuccessful: true` even on fatal config errors (verifi
 | File | Change |
 |---|---|
 | `.gitignore` | Change `gogrep` to `/gogrep`. The unanchored entry ignores everything under `opengrep/gogrep/` (`git check-ignore` confirms), so fixtures could not be committed; it also hides fixtures from opengrep directory scans that run without `--no-git-ignore`. Add `**/opengrep/gogrep/rules/test/**/actual.txt` and `**/opengrep/gogrep/rules/test/**/actual.sarif`. Verified with `git check-ignore`: these ignore fixture output under both the project tree and `testdata/`, and keep `expected.txt` and rules tracked. |
-| `.gitattributes` (new) | `testdata/** -text`, so CRLF samples and recorded SARIF stay byte-exact. |
+| `.gitattributes` (new) | `**/testdata/** -text`, so CRLF samples and recorded SARIF stay byte-exact. The leading `**/` makes it cover `internal/ruletest/testdata/` too; a plain `testdata/**` matches only the top-level directory (`git check-attr`, verified). |
 | `internal/rules/rules.go` | `FromFS(fsys fs.FS, skipDirs ...string) (Set, error)` returns `fs.SkipDir` for directories whose set-relative path is in `skipDirs`. Only top-level paths are skipped, never every directory named `test`, because bundled `opengrep-rules` has a real rule under `…/ncino/tests/`. |
 | `rulesargs.go` `loadEnv` | Load `project` with `FromFS(os.DirFS(projectRulesDir), "test")` and `gogrep` with `FromFS(own, "test")`. YAML samples, including invalid YAML or YAML with a `rules:` key, can then no longer abort `scan`, `rules` and `suites`, nor become live `project.test.*` rules. **Behaviour change:** a namespace literally named `test` is reserved, and `opengrep/gogrep/rules/test/*.yaml` rules stop loading. Add `projectTestsDir`. |
 | `rulesargs.go` `withRules` | When gogrep injects its config, also pass `--exclude=opengrep/gogrep/rules/test`. A project `.semgrepignore` **replaces** opengrep's default `test/` exclusion, and with one present `scan .` reported fixture samples; this `--exclude` removed them, also for a nested `…/opengrep/gogrep/rules/test/` and for an absolute or parent-directory target (verified). gogrep's injected arguments (`--config <file> --no-rewrite-rule-ids --exclude=…`) go right after `scan` instead of being appended: appended after a user's `--`, opengrep read them as targets (`File not found: --no-rewrite-rule-ids`, verified). A user's own `--config` stays untouched. |
@@ -647,18 +648,18 @@ There are no `_test.go` files today. All new tests use the standard `testing` pa
   - the header rule; an empty file being 0 bytes; reader normalisation (BOM, CRLF, trailing newlines);
   - uri normalisation (`\`, `./`) and rejection of absolute, `..` and `://` uris;
   - the Windows diagnostic path rewrite, tested as a pure function with an injected separator.
-- `ruletest/classify`: driven by SARIF recorded from opengrep 1.30.2 in `internal/ruletest/testdata/sarif/`, with a sibling `.exit` file holding the exit code:
+- `ruletest/classify` and the golden `Render` tests: driven by SARIF recorded from opengrep 1.30.2 in `internal/ruletest/testdata/sarif/`, with a sibling `.exit` file holding the exit code, and for runs with results a sibling `.txt` file holding the table `Render` must make of it:
 
   | File | Run |
   |---|---|
-  | `results.json` | the §2.4 run including `broken.go` |
+  | `results.json` | the §2.4 run including `broken.go`; `results.txt` is the §2.4 table |
   | `invalid-schema.json` | exit 7, `InvalidRuleSchemaError` |
-  | `bad-pattern.json` | exit 2, rule missing from `driver.rules` |
-  | `unknown-language.json` | exit 8 |
-  | `file-not-found.json` | exit 2, rule present |
-  | `multiline-message.json` | — |
+  | `bad-pattern.json` | exit 2, `Rule parse error`, rule missing from `driver.rules` |
+  | `unknown-language.json` | exit 8, `UnknownLanguageError` |
+  | `file-not-found.json` | exit 2, `SemgrepError`, rule missing from `driver.rules` too |
+  | `multiline-message.json` | exit 0; messages with multi-line LF and CRLF bindings, `\|`, a tab, ESC, `\`, non-ASCII and U+FFFD |
 
-  The exact recording command is kept in a comment in the test file.
+  The exact recording script is kept in a comment in the test file.
 - `ruletest/diff`: insert, delete, change, merged context, empty sides and hunk headers.
 - `ruletest/discover`:
   - depth-1 `rule.ref`, nested fixtures, orphan `expected.txt`, unknown `expected*` files;
