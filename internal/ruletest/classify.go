@@ -46,13 +46,18 @@ func Classify(out Output, ruleID string, samples []string) (table []byte, stage 
 	}
 
 	run := log.Runs[0]
-	var errs []string
-	semgrepError := false
+	var errs, notes []string // error-level notifications, and all of them
+	missingTarget := false
 	for _, inv := range run.Invocations {
 		for _, n := range inv.ToolExecutionNotifications {
+			lines := splitLines(n.Descriptor.ID + ": " + n.Message.Text)
+			notes = append(notes, lines...)
 			if n.Level == "error" {
-				errs = append(errs, splitLines(n.Descriptor.ID+": "+n.Message.Text)...)
-				semgrepError = semgrepError || n.Descriptor.ID == "SemgrepError"
+				errs = append(errs, lines...)
+				// opengrep loads no rule when a target is missing, and says so
+				// in a SemgrepError. A rule that opengrep-core rejects is a
+				// SemgrepError too, with another message.
+				missingTarget = missingTarget || n.Descriptor.ID == "SemgrepError" && strings.HasPrefix(n.Message.Text, "File not found:")
 			}
 		}
 	}
@@ -61,11 +66,11 @@ func Classify(out Output, ruleID string, samples []string) (table []byte, stage 
 		loaded = loaded || r.ID == ruleID
 	}
 	switch {
-	case out.Code == 7 || out.Code == 8 || !loaded && !semgrepError:
+	case out.Code == 7 || out.Code == 8 || !loaded && !missingTarget:
 		if len(errs) == 0 {
-			errs = append([]string{"opengrep did not load rule " + ruleID}, tail(out.Stderr)...)
+			notes = append(append([]string{"opengrep did not load rule " + ruleID}, notes...), tail(out.Stderr)...)
 		}
-		return nil, StageRule, errs
+		return nil, StageRule, notes
 	case out.Code != 0 || len(errs) > 0:
 		return nil, StageRun, append(append(errs, exit), tail(out.Stderr)...)
 	}

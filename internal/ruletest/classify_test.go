@@ -50,6 +50,16 @@ func runLog(rules []string, results, notes []any) []byte {
 	return data
 }
 
+// rejected returns the message of the SemgrepError with which opengrep
+// reports that opengrep-core rejected a rule for cause, shortened.
+func rejected(cause string) string {
+	return "Error while matching: non-zero exit status with one or more errors in json response\n" +
+		"opengrep-core exit code: 2\n" +
+		"unexpected errors in json output after invoking opengrep-core:\n" +
+		"   Fatal error :\n" +
+		" " + cause
+}
+
 // Each row of the design's §6.3, on the recorded runs.
 func TestClassifyRecorded(t *testing.T) {
 	tests := []struct {
@@ -144,17 +154,32 @@ func TestClassify(t *testing.T) {
 			StageRule, "InvalidRuleSchemaError: bad", ""},
 		{"exit 8 without notifications", Output{Stdout: sarifLog(nil, nil), Stderr: []byte("unknown language\n"), Code: 8},
 			StageRule, "opengrep did not load rule project.go.no-exec-command\n> unknown language", ""},
-		{"rule missing, exit 0", Output{Stdout: runLog(nil, nil, []any{note("warning", "W", "w")})},
-			StageRule, "opengrep did not load rule project.go.no-exec-command", ""},
+		{"rule missing, exit 0", Output{Stdout: runLog(nil, nil, []any{note("warning", "W", "w")}), Stderr: []byte("oops\n")},
+			StageRule, "opengrep did not load rule project.go.no-exec-command\nW: w\n> oops", ""},
 		{"other rule loaded", Output{Stdout: runLog([]string{"project.go.other"}, []any{other}, nil)},
 			StageRule, "opengrep did not load rule project.go.no-exec-command", ""},
+		// What opengrep 1.30.2 reports, shortened, for an unknown key under
+		// options:, a metavariable-pattern in an unknown language, and
+		// min-version: 99.0.0 (verified). Their messages hold paths on the
+		// machine that ran them, so they are not recorded.
+		{"options rejected by opengrep-core", Output{Stdout: runLog(nil, nil, []any{note("error", "SemgrepError", rejected("Failure: Found unknown JSON field nonexistent_option"))}), Code: 2},
+			StageRule, "SemgrepError: " + rejected("Failure: Found unknown JSON field nonexistent_option"), ""},
+		{"language rejected by opengrep-core", Output{Stdout: runLog(nil, nil, []any{note("error", "SemgrepError", rejected(`Xlang.InternalInvalidLanguage("project.go.no-exec-command", "unsupported language: nosuchlang")`))}), Code: 2},
+			StageRule, "SemgrepError: " + rejected(`Xlang.InternalInvalidLanguage("project.go.no-exec-command", "unsupported language: nosuchlang")`), ""},
+		{"min-version", Output{Stdout: runLog(nil, nil, []any{
+			note("note", "Incompatible rule", "Incompatible rule cache.project.go.no-exec-command:\n This rule requires upgrading Opengrep from version 1.30.2 (Semgrep 1.100.0) to a version compatible with Semgrep 99.0.0 or higher"),
+			note("error", "SemgrepError", "No config given. Run with `--config auto` or see https://semgrep.dev/docs/running-rules/ for instructions on running with a specific config\n"),
+		}), Stderr: []byte("oops\n"), Code: 7},
+			StageRule, "Incompatible rule: Incompatible rule cache.project.go.no-exec-command:\n" +
+				" This rule requires upgrading Opengrep from version 1.30.2 (Semgrep 1.100.0) to a version compatible with Semgrep 99.0.0 or higher\n" +
+				"SemgrepError: No config given. Run with `--config auto` or see https://semgrep.dev/docs/running-rules/ for instructions on running with a specific config", ""},
 
 		// Row 3: opengrep failed.
 		{"exit 1", Output{Stdout: sarifLog([]any{ok}, nil), Stderr: []byte("oops\n"), Code: 1},
 			StageRun, "opengrep exited with code 1\n> oops", ""},
 		{"error notification, exit 0", Output{Stdout: sarifLog([]any{ok}, []any{note("error", "Fatal", "a\r\nb"), note("warning", "W", "w")})},
 			StageRun, "Fatal: a\nb\nopengrep exited with code 0", ""},
-		{"SemgrepError, rule missing", Output{Stdout: runLog(nil, nil, []any{note("error", "SemgrepError", "File not found: x.go")}), Code: 2},
+		{"missing target", Output{Stdout: runLog(nil, nil, []any{note("error", "SemgrepError", "File not found: x.go"), note("warning", "W", "w")}), Code: 2},
 			StageRun, "SemgrepError: File not found: x.go\nopengrep exited with code 2", ""},
 
 		// Row 4: a result of another rule.

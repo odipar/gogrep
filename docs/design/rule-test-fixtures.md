@@ -256,7 +256,7 @@ Examples, given the project rules `project.go.no-exec-command`, `project.go.net.
 ### 3.3 Load failures
 
 - **gogrep cannot parse a rule YAML file.** This aborts `loadEnv()` for every set, which is existing behaviour shared with `scan`, `rules` and `suites`. `gogrep test` then exits **2** with the existing message, for example `gogrep: project/go/x.yaml: yaml: …`. That is a setup error, not N test failures.
-- **gogrep parses the rule but opengrep rejects it.** Examples are a schema error, an unknown language or an invalid pattern. The fixture fails at `RULE`, showing opengrep's error notifications (§6.3).
+- **gogrep parses the rule but opengrep rejects it.** Examples are a schema error, an unknown language, an invalid pattern, an unknown `options:` key or a `min-version` above the binary's. The fixture fails at `RULE`, showing opengrep's notifications (§6.3).
 
 ## 4. The expected-file format
 
@@ -563,12 +563,12 @@ Opengrep reports `executionSuccessful: true` even on fatal config errors (verifi
 | # | Condition | Stage | Description shown |
 |---|---|---|---|
 | 1 | The process could not start or was killed. stdout is not JSON SARIF with `version` `2.1.0` and exactly one run. A result has no location, an incomplete region, or a uri that cannot be attributed (absolute, `..`, `://`). | `RUN` | The cause, the exit code, and the last 20 stderr lines. |
-| 2 | The exit code is 7 (invalid YAML or schema) or 8 (unknown language), or the resolved id is not in `tool.driver.rules[].id` and no error-level notification has the descriptor `SemgrepError`. An invalid pattern exits 2 with a `Rule parse error` notification and drops just that rule (verified). A missing target also exits 2 and leaves `driver.rules` empty, but its notification is a `SemgrepError` (`File not found: missing.go`, verified), so it falls through to row 3. | `RULE` | Each error-level notification as `<descriptor.id>: <message>`, or the stderr tail if there are none. |
-| 3 | Any other non-zero exit code (for example 2 with `File not found`), or any error-level notification. | `RUN` | The notifications, the exit code, and the stderr tail. |
+| 2 | The exit code is 7 (invalid YAML or schema) or 8 (unknown language), or the resolved id is not in `tool.driver.rules[].id` and no error-level `SemgrepError` notification starts with `File not found:`. An invalid pattern exits 2 with a `Rule parse error` notification and drops just that rule. An options key or a `metavariable-pattern` language that opengrep-core rejects exits 2 with an empty `driver.rules` and a `SemgrepError` that starts `Error while matching` and quotes opengrep-core's error and stack trace. A `min-version` above the binary's exits 7 with a note-level `Incompatible rule` notification next to a `SemgrepError` that says only `No config given` (all verified). A crash of opengrep-core while matching would read like a rejected rule and is labelled `RULE` too; its description shows the cause either way. | `RULE` | Each notification, of any level, in the order opengrep reports them, as `<descriptor.id>: <message>`. |
+| 3 | Any other non-zero exit code, or any error-level notification. A missing target exits 2 and empties `driver.rules` too, but its `SemgrepError` reads `File not found: missing.go` (verified); gogrep passes only the samples it has just found, so this needs a sample removed during the run. | `RUN` | The error-level notifications, the exit code, and the stderr tail. |
 | 4 | A result whose `ruleId` is not the resolved id. | `RUN` | `unexpected rule id <x>` |
 | 5 | Otherwise: render the table (§4) and compare it with `expected.txt`. | `RESULT` on a mismatch | The diff, or the error when `expected.txt` exists but cannot be read. |
 
-In descriptions, each line of stderr is prefixed with `> `, blank lines at the start and end are dropped, and the exit code reads `opengrep exited with code <n>`. When row 2 applies without error notifications, the description starts with `opengrep did not load rule <id>`.
+In descriptions, each line of stderr is prefixed with `> `, blank lines at the start and end are dropped, and the exit code reads `opengrep exited with code <n>`. When row 2 applies without error-level notifications, the description starts with `opengrep did not load rule <id>` and ends with the stderr tail.
 
 **Warning- and note-level notifications become `diagnostics` rows, not failures.** Some samples are intentionally partial code. A sample that unexpectedly stops parsing, though, silently loses matches near the error. Recording the notification makes both cases visible and reviewable. The cost: an opengrep upgrade that rewords a parser message changes `expected.txt`, and that change is reviewed in the pin-bump PR.
 
@@ -670,7 +670,7 @@ There are no `_test.go` files today. All new tests use the standard `testing` pa
   | `file-not-found.json` | exit 2, `SemgrepError`, rule missing from `driver.rules` too |
   | `multiline-message.json` | exit 0; messages with multi-line LF and CRLF bindings, `\|`, a tab, ESC, `\`, non-ASCII and U+FFFD |
 
-  The exact recording script is kept in a comment in the test file.
+  The exact recording script is kept in a comment in the test file. Three more runs are tested with synthetic logs that copy, shortened, what opengrep 1.30.2 reports: an unknown `options:` key and a `metavariable-pattern` in an unknown language (exit 2, `SemgrepError` `Error while matching …`), and `min-version: 99.0.0` (exit 7, `Incompatible rule`). Their messages hold paths on the recording machine, so they are not recorded.
 - `ruletest/diff`: insert, delete, change, merged context, empty sides and hunk headers.
 - `ruletest/discover`:
   - depth-1 `rule.ref`, nested fixtures, orphan `expected.txt`, unknown `expected*` files;
