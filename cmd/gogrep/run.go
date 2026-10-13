@@ -13,7 +13,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 
 	"github.com/odipar/gogrep/internal/bundle"
@@ -112,7 +111,7 @@ func execOpengrep(args []string, stdout, stderr io.Writer) int {
 	}
 	cmd := exec.Command(bin, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stdout, stderr
-	cmd.Env = utf8Env(os.Environ())
+	cmd.Env = opengrep.UTF8Env(os.Environ())
 
 	// The child shares our process group and receives Ctrl-C directly;
 	// keep the wrapper alive so it can report the child's exit status.
@@ -127,25 +126,6 @@ func execOpengrep(args []string, stdout, stderr io.Writer) int {
 		return exitErr.ExitCode()
 	}
 	return 0
-}
-
-// utf8Env makes opengrep read rule files as UTF-8: without a UTF-8 locale its
-// embedded Python falls back to ASCII and crashes on non-ASCII rules.
-func utf8Env(env []string) []string {
-	if runtime.GOOS == "windows" {
-		return append(env, "PYTHONUTF8=1")
-	}
-	locale := ""
-	for _, name := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
-		if v := os.Getenv(name); v != "" {
-			locale = v
-			break
-		}
-	}
-	if l := strings.ToLower(locale); strings.Contains(l, "utf-8") || strings.Contains(l, "utf8") {
-		return env
-	}
-	return append(env, "LC_ALL=C.UTF-8")
 }
 
 // opengrepBin resolves the wrapped binary: $OPENGREP_BIN, then the binary

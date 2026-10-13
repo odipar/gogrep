@@ -1,5 +1,5 @@
 // Package opengrep finds, verifies and prepares the opengrep executable that
-// gogrep runs.
+// gogrep runs, and runs it.
 package opengrep
 
 import (

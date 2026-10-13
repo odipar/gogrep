@@ -13,8 +13,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/odipar/gogrep/internal/opengrep"
 	"github.com/odipar/gogrep/internal/rules"
 	"github.com/odipar/gogrep/internal/ruletest"
 )
@@ -202,19 +202,14 @@ func testBin() (string, error) {
 	return bin, nil
 }
 
-// execFixture runs opengrep for one fixture, as ruletest.Exec describes.
+// execFixture runs opengrep for one fixture, as ruletest.Exec describes, in
+// a process group of its own that cancelling ctx kills.
 func execFixture(ctx context.Context, dir string, args []string) (stdout, stderr []byte, code int, err error) {
 	var out, errb bytes.Buffer
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	killTree(cmd)
-	cmd.Dir, cmd.Env = dir, utf8Env(os.Environ())
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	cmd.WaitDelay = time.Second
-	err = cmd.Run()
-	// A process killed on Windows exits with code 1, so after an interrupt
-	// an exit code is not trusted.
+	c := &opengrep.Cmd{Path: args[0], Args: args[1:], Dir: dir, Env: opengrep.UTF8Env(os.Environ()), Stdout: &out, Stderr: &errb}
+	err = c.Run(ctx)
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.Exited() && ctx.Err() == nil {
+	if errors.As(err, &exitErr) && exitErr.Exited() {
 		return out.Bytes(), errb.Bytes(), exitErr.ExitCode(), nil
 	}
 	return out.Bytes(), errb.Bytes(), 0, err
