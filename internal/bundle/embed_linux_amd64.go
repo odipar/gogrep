@@ -1,4 +1,4 @@
-//go:build bundled && !musl
+//go:build gogrep_bundled && !gogrep_musl
 
 package bundle
 

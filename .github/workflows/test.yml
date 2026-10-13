@@ -32,14 +32,28 @@ jobs:
         run: go run ./tools/fetch-opengrep
 
       - name: Vet
-        run: go vet ./... && go vet -tags bundled ./...
+        run: go vet ./... && go vet -tags gogrep_bundled ./...
+
+      - name: Check the build tags
+        # Platforms that opengrep.json pins no opengrep for still build with
+        # gogrep_bundled, and the old tag fails, naming the new one.
+        if: runner.os == 'Linux'
+        run: |
+          GOOS=freebsd GOARCH=amd64 go build -tags gogrep_bundled ./...
+          GOOS=linux GOARCH=386 go build -tags gogrep_bundled ./...
+          if out=$(go build -tags bundled ./... 2>&1); then
+            echo "::error::go build -tags bundled succeeded; it must fail naming gogrep_bundled"
+            exit 1
+          fi
+          echo "$out"
+          grep -q gogrep_bundled <<< "$out"
 
       - name: Test
-        run: go test -tags bundled ./...
+        run: go test -tags gogrep_bundled ./...
 
       - name: Build gogrep with the pinned opengrep
         # A directory output adds .exe on Windows.
-        run: go build -tags bundled -o "$RUNNER_TEMP/bin/" .
+        run: go build -tags gogrep_bundled -o "$RUNNER_TEMP/bin/" .
 
       - name: Run the example rule tests
         run: cd testdata/project && "$RUNNER_TEMP/bin/gogrep" test

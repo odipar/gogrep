@@ -470,10 +470,17 @@ pass through. That annotation-based runner is still available as
 ## Building
 
 ```sh
-go run ./tools/fetch-opengrep           # download the pinned opengrep and rule sets
-go build -tags bundled -o gogrep .      # build with them embedded
-go test -tags bundled ./...             # unit and integration tests
+go run ./tools/fetch-opengrep                  # download the pinned opengrep and rule sets
+go build -tags gogrep_bundled -o gogrep .      # build with them embedded
+go test -tags gogrep_bundled ./...             # unit and integration tests
 ```
+
+On Linux, `-tags gogrep_bundled,gogrep_musl` embeds the musl (Alpine) build
+of opengrep instead; fetch it with `go run ./tools/fetch-opengrep
+linux/amd64/musl` (or `linux/arm64/musl`). Before v0.4.0 the tags were
+`bundled` and `musl`; `-tags bundled` now fails to compile with an error
+that names `gogrep_bundled`. On a platform that `opengrep.json` pins no
+opengrep for, such as FreeBSD, `-tags gogrep_bundled` builds without one.
 
 The integration tests run the bundled opengrep on the example fixtures in
 [testdata/project](testdata/project) and compare the

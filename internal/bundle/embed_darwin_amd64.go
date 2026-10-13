@@ -1,4 +1,4 @@
-//go:build bundled
+//go:build gogrep_bundled
 
 package bundle
 

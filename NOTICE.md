@@ -4,7 +4,7 @@ gogrep is Copyright (C) 2026 Robbert van Dalen and is licensed under the
 GNU Lesser General Public License v2.1 (see [LICENSE](LICENSE)), the same
 license as opengrep.
 
-Release builds of gogrep (`-tags bundled`) also contain the third-party
+Release builds of gogrep (`-tags gogrep_bundled`) also contain the third-party
 components below, each under its own license. Their versions are pinned in
 [opengrep.json](opengrep.json).
 

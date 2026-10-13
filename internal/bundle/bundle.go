@@ -1,6 +1,7 @@
 // Package bundle holds the opengrep binary and rule sets embedded in gogrep
-// builds made with -tags bundled (plus musl for the Alpine variant on Linux).
-// Run `go run ./tools/fetch-opengrep` first to download them.
+// builds made with -tags gogrep_bundled (plus gogrep_musl for the Alpine
+// variant on Linux). Run `go run ./tools/fetch-opengrep` first to download
+// them.
 package bundle
 
 import (

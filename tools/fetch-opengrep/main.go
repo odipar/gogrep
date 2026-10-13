@@ -1,6 +1,7 @@
 // Command fetch-opengrep downloads the opengrep binaries and the rule set
 // pinned in opengrep.json into internal/bundle/bin, verifying each SHA-256
-// (and the rules' git commit), so that gogrep can be built with -tags bundled.
+// (and the rules' git commit), so that gogrep can be built with
+// -tags gogrep_bundled.
 //
 // Usage:
 //

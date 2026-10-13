@@ -1,4 +1,4 @@
-//go:build bundled && musl && linux && amd64
+//go:build gogrep_bundled && gogrep_musl && linux && amd64
 
 package bundle
 

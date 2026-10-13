@@ -27,12 +27,12 @@ jobs:
       - name: Build
         run: |
           mkdir -p dist
-          # Targets are GOOS/GOARCH[/variant]; a variant (musl) becomes a
-          # build tag and a suffix on the file name.
+          # Targets are GOOS/GOARCH[/variant]; a variant (musl) becomes the
+          # build tag gogrep_<variant> and a suffix on the file name.
           for target in $(jq -r '.assets | keys[]' opengrep.json); do
             IFS=/ read -r os arch variant <<< "$target"
-            tags=bundled name=gogrep_${os}_${arch} ext=
-            [ -n "$variant" ] && tags="$tags,$variant" name="${name}_$variant"
+            tags=gogrep_bundled name=gogrep_${os}_${arch} ext=
+            [ -n "$variant" ] && tags="$tags,gogrep_$variant" name="${name}_$variant"
             [ "$os" = windows ] && ext=.exe
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
               go build -tags "$tags" -trimpath -ldflags "-s -w" \
