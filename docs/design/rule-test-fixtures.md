@@ -2,6 +2,8 @@
 
 Design for #2.
 
+> **Code layout since this design:** the command's Go code now lives in package `cmd/gogrep`. Where this document names `main.go` (apart from `main()`), `rulesargs.go`, `sarif.go`, `testcmd.go`, `procgroup_*.go` or their tests, read `cmd/gogrep/` (`main.go`'s code is `cmd/gogrep/run.go`, `main_test.go` is `cmd/gogrep/run_test.go`) and `package gogrep` for `package main`. The top-level `main.go` only embeds `rules/` and `suites/` and calls `gogrep.Main`.
+
 ## 1. Summary
 
 `gogrep test` adds regression tests for custom rules, modelled on CodeQL's `codeql test run` and `codeql test accept`.
