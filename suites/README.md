@@ -35,7 +35,7 @@ A suite is a YAML list of instructions, applied in order:
 
 | Instruction | Meaning |
 |---|---|
-| `rules` | Add a rule set: `opengrep-rules`, `0xdea`, `semgrep-go` (pinned in `opengrep.json`), `gogrep` (this repo's `rules/`), `project` (`opengrep/gogrep/rules/` in the current directory), or the groups `bundled` (all pinned sets) and `all`. |
+| `rules` | Add a rule set: `opengrep-rules`, `0xdea`, `semgrep-go` (pinned in `opengrep.json`), `gogrep` (this repo's `rules/`), `project` (`opengrep/gogrep/rules/` in the current directory, except `test/`), or the groups `bundled` (all pinned sets) and `all`. |
 | `import` | Add the rules another suite selects, by name or path. |
 | `include` / `exclude` | Filter the rules located so far on their fields. |
 
