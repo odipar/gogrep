@@ -316,7 +316,7 @@ func TestRunEnv(t *testing.T) {
 	cache = filepath.Join(cache, "gogrep")
 	xdg := filepath.Join(cache, "runtime-"+hex.EncodeToString(sum.Sum(nil))[:16])
 	if runtime.GOOS == "windows" {
-		xdg = ""
+		xdg = os.Getenv("XDG_CACHE_HOME") // passed on as it is
 	}
 
 	_, _, stderr := runGogrep("scan", "--config", "r.yaml", ".")
