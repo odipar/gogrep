@@ -97,7 +97,12 @@ type Config struct {
 	// resolved in New and shared with the gogrep command; if
 	// os.UserCacheDir fails, the operations that need the cache return
 	// that error. Directories are created 0o700 and files 0o600 (0o700 for
-	// the executable).
+	// the executable). On Linux and macOS it should be ASCII: opengrep
+	// 1.30.2 runs no command, printing nothing and exiting 0, when its
+	// runtime is under a path that is not. Under such a CacheDir, gogrep
+	// leaves the runtime where opengrep keeps it by itself
+	// ($XDG_CACHE_HOME/opengrep or ~/.cache/opengrep, from Env), which must
+	// then be ASCII.
 	CacheDir string
 
 	// Env is the environment opengrep runs in, as in exec.Cmd.Env. nil
@@ -106,8 +111,8 @@ type Config struct {
 	// their own; Command does neither. All add LC_ALL=C.UTF-8 unless Env
 	// itself selects a UTF-8 locale (PYTHONUTF8=1 on Windows), since
 	// opengrep crashes on non-ASCII rules otherwise, and on Linux and macOS
-	// set XDG_CACHE_HOME to the runtime directory in CacheDir. opengrep
-	// runs git, which it finds through Env's PATH.
+	// set XDG_CACHE_HOME to the runtime directory in CacheDir once it is
+	// prepared. opengrep runs git, which it finds through Env's PATH.
 	Env []string
 
 	// Logger receives gogrep's own records at Debug and Info level: which

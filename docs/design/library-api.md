@@ -337,7 +337,7 @@ Every other behaviour, including all golden files and the injected argv apart fr
    - `gogrep install-opengrep [--from FILE] [--base-url URL]` fills the cache. Before, `install-opengrep` was passed to opengrep, which rejects it.
    - An unbundled gogrep that finds no opengrep now prints the not-installed message of §4.2 instead of `exec: "opengrep": executable file not found in $PATH`. The exit code is still 1.
 9. **opengrep's runtime moves under gogrep's cache** on Linux and macOS (§4.6).
-   - Every opengrep that gogrep starts, including `gogrep opengrep …`, gets `XDG_CACHE_HOME=<cache>/gogrep/runtime-<sha16>`.
+   - Every opengrep that gogrep starts, including `gogrep opengrep …`, gets `XDG_CACHE_HOME=<cache>/gogrep/runtime-<sha16>`, unless that path is not ASCII (§4.6).
    - After upgrading, the first run unpacks once (about 8 s, 245 MB).
    - Parallel `gogrep` processes on a cold machine no longer crash: 2 of 4 died with SIGBUS in each of three trials before.
 10. **`gogrep test` is hermetic.** It runs opengrep with every `SEMGREP_*` and `OPENGREP_*` variable removed, and with a log file of its own per opengrep process. It therefore no longer overwrites `~/.opengrep/semgrep.log`. Its output is unchanged.
@@ -437,7 +437,12 @@ type Config struct {
 	// resolved in New and shared with the gogrep command; if
 	// os.UserCacheDir fails, the operations that need the cache return
 	// that error. Directories are created 0o700 and files 0o600 (0o700 for
-	// the executable).
+	// the executable). On Linux and macOS it should be ASCII: opengrep
+	// 1.30.2 runs no command, printing nothing and exiting 0, when its
+	// runtime is under a path that is not. Under such a CacheDir, gogrep
+	// leaves the runtime where opengrep keeps it by itself
+	// ($XDG_CACHE_HOME/opengrep or ~/.cache/opengrep, from Env), which must
+	// then be ASCII.
 	CacheDir string
 
 	// Env is the environment opengrep runs in, as in exec.Cmd.Env. nil
@@ -446,8 +451,8 @@ type Config struct {
 	// their own; Command does neither. All add LC_ALL=C.UTF-8 unless Env
 	// itself selects a UTF-8 locale (PYTHONUTF8=1 on Windows), since
 	// opengrep crashes on non-ASCII rules otherwise, and on Linux and macOS
-	// set XDG_CACHE_HOME to the runtime directory in CacheDir. opengrep
-	// runs git, which it finds through Env's PATH.
+	// set XDG_CACHE_HOME to the runtime directory in CacheDir once it is
+	// prepared. opengrep runs git, which it finds through Env's PATH.
 	Env []string
 
 	// Logger receives gogrep's own records at Debug and Info level: which
@@ -1296,12 +1301,14 @@ No step uses the network.
 
 **Why the lock exists.** Correctness does not depend on it. Without it, N cold processes each unpack, which took 35–44 s per process in parallel instead of 8 s alone.
 
-**On failure.** If `--version` fails, or `CacheDir` cannot be written:
+**On failure.** If `--version` fails, exits 0 without printing a version, or `CacheDir` cannot be written:
 
 - nothing is published;
 - the run proceeds without the redirect, exactly as today;
 - `Logger` records why;
 - the real run then reports any real error.
+
+**Paths that are not ASCII.** Under a UTF-8 locale, which gogrep always sets, opengrep 1.30.2 unpacks its runtime but then runs no command, printing nothing and exiting 0, when `XDG_CACHE_HOME` is not ASCII (verified with `é`; a space is fine). Publishing on exit 0 alone made every later scan an `*OutputError` with an empty stderr. So a `--version` that prints nothing has failed, and on Linux and macOS a `CacheDir` that is not ASCII gets no runtime at all, without the 245 MB unpack that would fail on every run: opengrep then keeps its runtime where it does by itself (`$XDG_CACHE_HOME` or `$HOME/.cache`, from `Env`), which must be ASCII instead. A non-ASCII `HOME` broke v0.3.0 in the same way.
 
 A cancelled preparation returns the ctx error.
 

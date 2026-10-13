@@ -24,8 +24,8 @@ import (
 // while it runs, creating overlap there if another run is active. It
 // writes to $SEMGREP_LOG_FILE, creates $GOGREP_TEST_READY if set, waits
 // $GOGREP_TEST_DELAY (100 ms by default), unpacks a runtime into
-// $XDG_CACHE_HOME/opengrep/v1.30.2 if that is set, prints its version and
-// exits with $GOGREP_TEST_EXIT.
+// $XDG_CACHE_HOME/opengrep/v1.30.2 if that is set, prints its version
+// unless $GOGREP_TEST_SILENT=1, and exits with $GOGREP_TEST_EXIT.
 func unpackHelper() int {
 	runs := os.Getenv("GOGREP_TEST_RUNS")
 	active := filepath.Join(runs, "active")
@@ -50,7 +50,9 @@ func unpackHelper() int {
 			return 2
 		}
 	}
-	fmt.Println("1.30.2")
+	if os.Getenv("GOGREP_TEST_SILENT") != "1" {
+		fmt.Println("1.30.2")
+	}
 	code, _ := strconv.Atoi(os.Getenv("GOGREP_TEST_EXIT"))
 	return code
 }
@@ -158,27 +160,34 @@ func TestPrepareRuntime(t *testing.T) {
 }
 
 // A failed preparation publishes nothing, and the run goes ahead without
-// it.
+// it. So does one that exits 0 without printing a version, as opengrep
+// 1.30.2 does under a path that is not ASCII.
 func TestPrepareRuntimeFails(t *testing.T) {
 	t.Parallel()
-	exe, sum, env, runs := unpacker(t, "GOGREP_TEST_EXIT=3")
-	dir := t.TempDir()
-	var log bytes.Buffer
-	for i := 1; i <= 2; i++ {
-		xdg, err := PrepareRuntime(context.Background(), exe, sum, dir, env, slog.New(slog.NewTextHandler(&log, nil)))
-		if n, _ := countRuns(t, runs); xdg != "" || err != nil || n != i {
-			t.Errorf("PrepareRuntime of a failing opengrep = %q, %v after %d runs; want \"\" after %d", xdg, err, n, i)
+	for _, tt := range []struct{ env, why string }{
+		{"GOGREP_TEST_EXIT=3", "exit status 3"},
+		{"GOGREP_TEST_SILENT=1", "exited 0 but printed no version"},
+	} {
+		exe, sum, env, runs := unpacker(t, tt.env)
+		dir := t.TempDir()
+		var log bytes.Buffer
+		for i := 1; i <= 2; i++ {
+			xdg, err := PrepareRuntime(context.Background(), exe, sum, dir, env, slog.New(slog.NewTextHandler(&log, nil)))
+			if n, _ := countRuns(t, runs); xdg != "" || err != nil || n != i {
+				t.Errorf("PrepareRuntime of a failing opengrep (%s) = %q, %v after %d runs; want \"\" after %d", tt.env, xdg, err, n, i)
+			}
 		}
-	}
-	if !strings.Contains(log.String(), "could not prepare opengrep's runtime") || !strings.Contains(log.String(), "exit status 3") {
-		t.Errorf("PrepareRuntime logged\n%s\nwant why it failed", log.String())
-	}
-	for _, name := range []string{"runtime-" + sum[:16], "runtime-" + sum[:16] + ".ready"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
-			t.Errorf("a failed preparation published %s", name)
+		if !strings.Contains(log.String(), "could not prepare opengrep's runtime") || !strings.Contains(log.String(), tt.why) {
+			t.Errorf("PrepareRuntime (%s) logged\n%s\nwant why it failed", tt.env, log.String())
 		}
+		for _, name := range []string{"runtime-" + sum[:16], "runtime-" + sum[:16] + ".ready"} {
+			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+				t.Errorf("a failed preparation (%s) published %s", tt.env, name)
+			}
+		}
+		checkNoTemp(t, dir)
 	}
-	checkNoTemp(t, dir)
+	exe, sum, env, _ := unpacker(t, "GOGREP_TEST_EXIT=3")
 
 	// A cache that cannot be written is the same.
 	file := filepath.Join(t.TempDir(), "file")
@@ -187,6 +196,25 @@ func TestPrepareRuntimeFails(t *testing.T) {
 	}
 	if xdg, err := PrepareRuntime(context.Background(), exe, sum, filepath.Join(file, "cache"), env, slog.New(slog.DiscardHandler)); xdg != "" || err != nil {
 		t.Errorf("PrepareRuntime in an impossible cache = %q, %v; want \"\" and no error", xdg, err)
+	}
+}
+
+// Under a path that is not ASCII, where opengrep 1.30.2 runs nothing, no
+// runtime is prepared on Linux and macOS.
+func TestPrepareRuntimeNotASCII(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows keeps opengrep's runtime where opengrep does")
+	}
+	exe, sum, env, runs := unpacker(t)
+	dir := filepath.Join(t.TempDir(), "caché")
+	var log bytes.Buffer
+	xdg, err := PrepareRuntime(context.Background(), exe, sum, dir, env, slog.New(slog.NewTextHandler(&log, nil)))
+	if n, _ := countRuns(t, runs); xdg != "" || err != nil || n != 0 {
+		t.Errorf("PrepareRuntime under %s = %q, %v after %d runs; want \"\" and no run", dir, xdg, err, n)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) || !strings.Contains(log.String(), "not ASCII") {
+		t.Errorf("PrepareRuntime under %s created it (%v) or logged\n%s", dir, err, log.String())
 	}
 }
 

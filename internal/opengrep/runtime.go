@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // prepareTimeout bounds the opengrep run that unpacks its runtime, which
@@ -44,12 +45,18 @@ var preparing struct {
 //
 // When the preparation fails, PrepareRuntime logs why to log and returns "",
 // so that opengrep runs as it would by itself and reports any real error;
-// when ctx is done, it returns ctx's error.
+// when ctx is done, it returns ctx's error. A `--version` that exits 0 but
+// prints nothing has failed: opengrep 1.30.2 does that for every command
+// when its runtime is under a path that is not ASCII. On Linux and macOS,
+// PrepareRuntime therefore prepares nothing in such a dir, and returns "".
 func PrepareRuntime(ctx context.Context, exe, sum, dir string, env []string, log *slog.Logger) (string, error) {
 	key := sum[:16]
 	ready := filepath.Join(dir, "runtime-"+key)
 	if runtime.GOOS == "windows" {
 		ready += ".ready"
+	} else if !ascii(dir) {
+		log.Info("opengrep cannot run with its runtime under a path that is not ASCII; it runs without a prepared one", "dir", dir)
+		return "", nil
 	}
 	if isPrepared(ready) {
 		return xdgCache(ready), nil
@@ -175,19 +182,33 @@ func prepareInPlace(ctx context.Context, exe, dir, ready string, env []string) e
 	return f.Close()
 }
 
-// runVersion runs exe --version in env, within prepareTimeout.
+// runVersion runs exe --version in env, within prepareTimeout, and checks
+// that it printed a version.
 func runVersion(ctx context.Context, exe string, env []string) error {
 	ctx, cancel := context.WithTimeout(ctx, prepareTimeout)
 	defer cancel()
-	var stderr bytes.Buffer
-	c := &Cmd{Path: exe, Args: []string{"--version"}, Env: env, Stderr: &stderr}
+	var stdout, stderr bytes.Buffer
+	c := &Cmd{Path: exe, Args: []string{"--version"}, Env: env, Stdout: &stdout, Stderr: &stderr}
 	if err := c.Run(ctx); err != nil {
 		if line := lastLine(stderr.Bytes()); line != "" {
 			return fmt.Errorf("%s --version: %w: %s", exe, err, line)
 		}
 		return fmt.Errorf("%s --version: %w", exe, err)
 	}
+	if len(bytes.TrimSpace(stdout.Bytes())) == 0 {
+		return fmt.Errorf("%s --version exited 0 but printed no version", exe)
+	}
 	return nil
+}
+
+// ascii reports whether s is ASCII.
+func ascii(s string) bool {
+	for i := range len(s) {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 // lastLine returns the last line of output that is not blank.

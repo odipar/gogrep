@@ -48,7 +48,9 @@
 // once, privately, and the complete runtime is then published in the cache,
 // so that concurrent opengrep processes, in this process or others, never
 // start from a half-written one; on Windows, gogrep lets one opengrep
-// unpack it alone, where opengrep keeps it.
+// unpack it alone, where opengrep keeps it. opengrep 1.30.2 runs nothing
+// when its runtime is under a path that is not ASCII, so on Linux and macOS
+// a [Config].CacheDir that is not ASCII leaves it where opengrep keeps it.
 //
 // On macOS, files that Go writes carry no quarantine attribute, so
 // Gatekeeper is not involved. A host application that sets
