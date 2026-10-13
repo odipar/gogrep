@@ -197,7 +197,7 @@ func TestRun(t *testing.T) {
 	}
 
 	sep := string(filepath.Separator)
-	want := []string{testBin, "scan", "--config", testConfig, "--no-rewrite-rule-ids", "--sarif", "--disable-version-check", "-j", "1", "--", "." + sep + "a.go"}
+	want := []string{testBin, "scan", "--config", testConfig, "--no-rewrite-rule-ids", "--sarif", "--disable-version-check", "--timeout", "0", "-j", "1", "--", "." + sep + "a.go"}
 	for _, test := range tests {
 		if args, ran := r.calls[test.Dir]; test.Rule == nil && ran {
 			t.Errorf("%s ran opengrep, want not", test.Name)
@@ -345,7 +345,7 @@ func TestRunShowOutput(t *testing.T) {
 	sample := "." + string(filepath.Separator) + "a.go"
 	want := `Executing 2 tests.
 [1/2] PASSED test/a
-  $ ` + commandLine([]string{r.Bin, "scan", "--config", testConfig, "--no-rewrite-rule-ids", "--sarif", "--disable-version-check", "-j", "1", "--", sample}) + `
+  $ ` + commandLine([]string{r.Bin, "scan", "--config", testConfig, "--no-rewrite-rule-ids", "--sarif", "--disable-version-check", "--timeout", "0", "-j", "1", "--", sample}) + `
   > Scanning 1 file.
   >
   > Ran 1 rule.

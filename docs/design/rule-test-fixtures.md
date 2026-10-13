@@ -534,6 +534,7 @@ argv      = <opengrep> scan
               --no-rewrite-rule-ids
               --sarif
               --disable-version-check
+              --timeout 0
               -j 1
               --
               ./<sample> ./<sample> ...              ("." + os.PathSeparator + filepath.FromSlash(p), sorted)
@@ -548,6 +549,7 @@ argv      = <opengrep> scan
 | `--no-rewrite-rule-ids` | Without it, opengrep prefixes the config file's directory to the rule id. |
 | `--sarif` on stdout | `-o` creates the file with mode 0644, which breaks the owner-only rule. stdout carries the same JSON (verified). |
 | `--disable-version-check` | Guarantees no version-check network call. The flag exists in 1.30.2 (verified). |
+| `--timeout 0` | Turns off opengrep's wall-clock limit per rule and file (5 s by default). A run that hits it reports a warning-level `Timeout` notification and drops that file's results, so the expected output would depend on the machine's speed and load: a fixture learned on a fast laptop could fail on a slow CI runner (verified with a 3.6 MB sample). The cost is that a sample on which the rule never finishes hangs the run until it is interrupted. |
 | `-j 1` | gogrep parallelises across fixtures. opengrep's results are identical for any `-j` (verified). |
 | `utf8Env` | Messages and rule files stay UTF-8 (`LC_ALL=C.UTF-8` or `PYTHONUTF8=1`). |
 | Never passed | `--autofix` (rewrites samples), `--strict` (turns syntax warnings into exit 3), `--error`, `-q` (stderr is useful in failure reports), `--scan-unknown-extensions` (fixtures should behave like a real scan), any `--x-*` flag, `-o`, `--json`. |
@@ -792,7 +794,7 @@ steps:
 | **Failing on sample syntax errors** | Rejected in favour of `diagnostics` rows, which are visible and regression-checked but allow intentionally partial samples. |
 | **`gogrep test-rules` or `gogrep rules test`** | Rejected. `test` matches CodeQL and is what users type, and `gogrep rules` ignores positional arguments today. |
 | **CodeQL inline expectations** (`// $ Alert`, `SPURIOUS:`, `MISSING:`) | Deferred to a follow-up as a `rule.ref` option that adds a `testFailures` set while staying diff-based. The syntax choice (CodeQL's same-line `$ Alert` or opengrep's next-line `ruleid:`) is made there. |
-| **More flags in v1**: `--format json`, `--slice N/M`, `--failing-exitcode`, `--timeout`, `--require-tests` (fail on untested project rules) | Deferred to follow-ups, along with autofix tests (opengrep's SARIF `fixes` are inconsistent: `insertedContent` is the whole fixed line while `deletedRegion` covers only the match) and cleanup of the never-cleaned `selections/` cache. |
+| **More flags in v1**: `--format json`, `--slice N/M`, `--failing-exitcode`, a per-fixture `--timeout` (fixtures run without opengrep's, §6.2), `--require-tests` (fail on untested project rules) | Deferred to follow-ups, along with autofix tests (opengrep's SARIF `fixes` are inconsistent: `insertedContent` is the whole fixed line while `deletedRegion` covers only the match) and cleanup of the never-cleaned `selections/` cache. |
 
 ### 9.2 Open questions for the user
 

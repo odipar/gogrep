@@ -159,7 +159,7 @@ func (r *Runner) threads(n int) int {
 // args returns the command line that runs opengrep with the test's rule on
 // its samples, as the design's §6.2 describes.
 func (r *Runner) args(t *Test) []string {
-	args := []string{r.Bin, "scan", "--config", t.Config, "--no-rewrite-rule-ids", "--sarif", "--disable-version-check", "-j", "1", "--"}
+	args := []string{r.Bin, "scan", "--config", t.Config, "--no-rewrite-rule-ids", "--sarif", "--disable-version-check", "--timeout", "0", "-j", "1", "--"}
 	for _, s := range t.Samples {
 		args = append(args, "."+string(filepath.Separator)+filepath.FromSlash(s))
 	}

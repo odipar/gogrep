@@ -36,7 +36,7 @@ import (
 //	rule go '' 'exec.Command($CMD, ...)' >no-message.yaml
 //	rule go "$m" 'exec.Command($CMD, ...' >unclosed.yaml
 //	rule golang-ish "$m" 'exec.Command($CMD, ...)' >golang-ish.yaml
-//	rec() { (cd "$1" && opengrep scan --config "$OLDPWD/$3" --no-rewrite-rule-ids --sarif --disable-version-check -j 1 -- "${@:4}" >"$OLDPWD/$2.json"; echo $? >"$OLDPWD/$2.exit"); }
+//	rec() { (cd "$1" && opengrep scan --config "$OLDPWD/$3" --no-rewrite-rule-ids --sarif --disable-version-check --timeout 0 -j 1 -- "${@:4}" >"$OLDPWD/$2.json"; echo $? >"$OLDPWD/$2.exit"); }
 //	rec fx results rule.yaml ./safe.go ./sample.go ./sub/broken.go ./sub/runner_test.go
 //	rec fx invalid-schema no-message.yaml ./safe.go ./sample.go ./sub/runner_test.go
 //	rec fx bad-pattern unclosed.yaml ./safe.go ./sample.go ./sub/runner_test.go
