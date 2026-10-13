@@ -65,6 +65,7 @@ func PrepareRuntime(ctx context.Context, exe, sum, dir string, env []string, log
 	}
 	start := time.Now()
 	unlock, err := lock(ctx, filepath.Join(dir, "locks", "runtime-"+key+".lock"))
+	defer unlock()
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
@@ -73,7 +74,6 @@ func PrepareRuntime(ctx context.Context, exe, sum, dir string, env []string, log
 	} else if waited := time.Since(start); waited >= lockPoll {
 		log.Info("waited for another process preparing opengrep's runtime", "took", waited)
 	}
-	defer unlock()
 	if isPrepared(ready) {
 		return xdgCache(ready), nil
 	}

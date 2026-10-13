@@ -177,13 +177,13 @@ func Install(ctx context.Context, dir string, d *Download, log *slog.Logger) (st
 		return path, nil
 	}
 	unlock, err := lock(ctx, filepath.Join(dir, "locks", "install-"+d.SHA256[:16]+".lock"))
+	defer unlock()
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
 	if err != nil {
 		log.Info("installing opengrep without a lock", "err", err)
 	}
-	defer unlock()
 	if got, err := FileSHA256(path); err == nil && got == d.SHA256 {
 		return path, nil
 	}

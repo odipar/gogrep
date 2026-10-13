@@ -236,6 +236,26 @@ func TestInstall(t *testing.T) {
 	checkInstalled(t, path)
 }
 
+// An Install whose ctx is done releases the lock it took: on Windows, the
+// open lock file could not even be removed.
+func TestInstallCancelled(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	d := &Download{URL: "http://127.0.0.1:1/asset", SHA256: SHA256(asset)}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Install(ctx, dir, d, slog.New(slog.DiscardHandler)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Install with a done ctx = %v, want context.Canceled", err)
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 3*lockPoll)
+	defer cancel()
+	unlock, err := lock(ctx, filepath.Join(dir, "locks", "install-"+d.SHA256[:16]+".lock"))
+	if err != nil {
+		t.Fatalf("taking the lock after a cancelled Install: %v; want it released", err)
+	}
+	unlock()
+}
+
 // Processes that install into one cold cache at once leave one executable
 // and no temporary files, and download it once.
 func TestInstallConcurrently(t *testing.T) {
