@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"fmt"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -14,9 +15,9 @@ import (
 // result, "| path:startLine:startColumn:endLine:endColumn | message |", then,
 // under a #select and a diagnostics header, a row per notification below
 // error level, "| level | id | message |". samples are the fixture's sample
-// paths, which notification messages name. It is an error when a result
-// cannot be placed in a sample: it has no location, an incomplete region, or
-// a uri outside the fixture.
+// paths, which results and notification messages name. It is an error when a
+// result cannot be placed in a sample: it has no location, an incomplete
+// region, or a uri that names no sample.
 func Render(log *Log, samples []string) ([]byte, error) {
 	type row struct {
 		path, msg  string
@@ -31,9 +32,9 @@ func Render(log *Log, samples []string) ([]byte, error) {
 			}
 			loc := res.Locations[0].PhysicalLocation
 			uri, reg := loc.ArtifactLocation.URI, loc.Region
-			p, ok := fixturePath(uri)
+			p, ok := samplePath(uri, samples, filepath.Separator)
 			if !ok {
-				return nil, fmt.Errorf("result %d has uri %q, which is not a path in the fixture", i+1, uri)
+				return nil, fmt.Errorf("result %d has uri %q, which is not a sample of the fixture", i+1, uri)
 			}
 			if min(reg.StartLine, reg.StartColumn, reg.EndLine, reg.EndColumn) < 1 {
 				return nil, fmt.Errorf("result %d in %s has an incomplete region %d:%d:%d:%d",
@@ -96,19 +97,17 @@ func Normalize(data []byte) []string {
 	return lines
 }
 
-// fixturePath returns a result uri as a slash path relative to the fixture
-// directory, opengrep's working directory. It never percent-decodes. It
-// reports false for a uri that is empty, absolute, outside the directory, or
-// a URL.
-func fixturePath(uri string) (string, bool) {
-	p := strings.TrimPrefix(strings.ReplaceAll(uri, `\`, "/"), "./")
-	switch {
-	case p == "", p == "..", strings.HasPrefix(p, "../"), strings.Contains(p, "://"):
-		return "", false
-	case strings.HasPrefix(p, "/"), len(p) >= 3 && p[1] == ':' && p[2] == '/': // also C:\
-		return "", false
+// samplePath returns the sample, one of samples, that a result uri names. A
+// uri is a path relative to the fixture directory, opengrep's working
+// directory, that may start with "./"; it is never percent-decoded. sep is
+// the OS path separator, which on Windows a uri may use instead of /.
+// samplePath reports false for a uri that names no sample.
+func samplePath(uri string, samples []string, sep byte) (string, bool) {
+	if sep != '/' {
+		uri = strings.ReplaceAll(uri, string(sep), "/")
 	}
-	return p, true
+	p := path.Clean(strings.TrimPrefix(uri, "./"))
+	return p, slices.Contains(samples, p)
 }
 
 // slashPaths replaces each sample's native path in a notification message,

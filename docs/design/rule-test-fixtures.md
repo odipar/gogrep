@@ -310,11 +310,12 @@ escape       = "\\" / "\|" / "\n" / "\r" / "\t" / "\u00" 2HEXUP / "\x" 2HEXUP
   - Treat positions as opaque numbers that the fixture pins down.
   - A result with a region field that is missing or 0 fails at `RUN` (§6.3).
 - **Paths are relative to the fixture directory and use `/`**, because opengrep runs with the fixture as its working directory and relative targets (§6.2). The uri is normalised in this order:
-  1. Replace `\` with `/`. This is defensive: Windows output is unverified, and CI covers it.
+  1. On Windows only, replace `\` with `/`. This is defensive: Windows output is unverified, and CI covers it. On macOS and Linux `\` is an ordinary file name character, so a sample `a\b.txt` stays distinct from `a/b.txt`.
   2. Strip a leading `./`. opengrep already strips it from `./sub/broken.go` (verified).
-  3. Never percent-decode. opengrep writes `sub dir/a b.go` raw (verified).
+  3. Clean the path (`path.Clean`).
+  4. Never percent-decode. opengrep writes `sub dir/a b.go` raw (verified).
 
-  A uri that is absolute, is `..` or starts with `../`, or contains `://` cannot be attributed to the fixture, and the fixture fails at `RUN`.
+  The result must be exactly one of the fixture's samples. Any other uri (absolute, outside the fixture, a URL, or a file gogrep did not pass) fails the fixture at `RUN`. Comparing with the samples needs no drive-letter or URL heuristics, so a sample in a Unix directory named `c:` works.
 - **Paths inside diagnostic messages.** On Windows only, each occurrence of a sample's native path (`sub\broken.go`, with or without a leading `.\`) is replaced by its slash form, so that expected files stay identical across operating systems. On macOS and Linux this is a no-op: the message already reads `sub/broken.go` (verified).
 
 ### 4.4 Escaping
@@ -562,7 +563,7 @@ Opengrep reports `executionSuccessful: true` even on fatal config errors (verifi
 
 | # | Condition | Stage | Description shown |
 |---|---|---|---|
-| 1 | The process could not start or was killed. stdout is not JSON SARIF with `version` `2.1.0` and exactly one run. A result has no location, an incomplete region, or a uri that cannot be attributed (absolute, `..`, `://`). | `RUN` | The cause, the exit code, and the last 20 stderr lines. |
+| 1 | The process could not start or was killed. stdout is not JSON SARIF with `version` `2.1.0` and exactly one run. A result has no location, an incomplete region, or a uri that names no sample (§4.3). | `RUN` | The cause, the exit code, and the last 20 stderr lines. |
 | 2 | The exit code is 7 (invalid YAML or schema) or 8 (unknown language), or the resolved id is not in `tool.driver.rules[].id` and no error-level `SemgrepError` notification starts with `File not found:`. An invalid pattern exits 2 with a `Rule parse error` notification and drops just that rule. An options key or a `metavariable-pattern` language that opengrep-core rejects exits 2 with an empty `driver.rules` and a `SemgrepError` that starts `Error while matching` and quotes opengrep-core's error and stack trace. A `min-version` above the binary's exits 7 with a note-level `Incompatible rule` notification next to a `SemgrepError` that says only `No config given` (all verified). A crash of opengrep-core while matching would read like a rejected rule and is labelled `RULE` too; its description shows the cause either way. | `RULE` | Each notification, of any level, in the order opengrep reports them, as `<descriptor.id>: <message>`. |
 | 3 | Any other non-zero exit code, or any error-level notification. A missing target exits 2 and empties `driver.rules` too, but its `SemgrepError` reads `File not found: missing.go` (verified); gogrep passes only the samples it has just found, so this needs a sample removed during the run. | `RUN` | The error-level notifications, the exit code, and the stderr tail. |
 | 4 | A result whose `ruleId` is not the resolved id. | `RUN` | `unexpected rule id <x>` |
@@ -657,7 +658,7 @@ There are no `_test.go` files today. All new tests use the standard `testing` pa
   - every escape, including `\\`, `\|`, `\u001B`, `\xFF` and CRLF inside messages;
   - the sort (numeric positions, bytewise paths, duplicates kept);
   - the header rule; an empty file being 0 bytes; reader normalisation (BOM, CRLF, trailing newlines);
-  - uri normalisation (`\`, `./`) and rejection of absolute, `..` and `://` uris;
+  - uri normalisation (`./`, cleaning, `\` on Windows only, tested as a pure function with an injected separator), rejection of every uri that names no sample, and samples named `a\b.txt` or under a directory `c:` on Unix;
   - the Windows diagnostic path rewrite, tested as a pure function with an injected separator.
 - `ruletest/classify` and the golden `Render` tests: driven by SARIF recorded from opengrep 1.30.2 in `internal/ruletest/testdata/sarif/`, with a sibling `.exit` file holding the exit code, and for runs with results a sibling `.txt` file holding the table `Render` must make of it:
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -227,9 +228,9 @@ func TestRender(t *testing.T) {
 		{"messages sort and render with CRLF as LF",
 			[]any{result("a.go", [4]int{1, 1, 1, 2}, "x\r\ny"), result("a.go", [4]int{1, 1, 1, 2}, "x\nx")}, nil,
 			"| a.go:1:1:1:2 | x\\nx |\n| a.go:1:1:1:2 | x\\ny |\n"},
-		{"uris made relative and slashed, never decoded",
+		{"uris made relative and clean, never decoded",
 			[]any{
-				result(`.\sub\a.go`, [4]int{1, 1, 1, 2}, "m"),
+				result("./sub/./a.go", [4]int{1, 1, 1, 2}, "m"),
 				result("./b.go", [4]int{1, 1, 1, 2}, "m"),
 				result("sub dir/a%20b|c.go", [4]int{1, 1, 1, 2}, "m"),
 			}, nil,
@@ -266,7 +267,8 @@ func TestRender(t *testing.T) {
 			if err != nil {
 				t.Fatalf("DecodeSARIF: %v", err)
 			}
-			got, err := Render(log, []string{"a.go"})
+			samples := []string{"B.go", "a.go", "a/b.go", "a2.go", "b.go", "sub dir/a%20b|c.go", "sub/a.go"}
+			got, err := Render(log, samples)
 			if err != nil {
 				t.Fatalf("Render: %v", err)
 			}
@@ -290,12 +292,12 @@ func TestRenderErrors(t *testing.T) {
 		{"no end line", `{"locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.go"},"region":{"startLine":1,"startColumn":1,"endColumn":2}}}]}`,
 			"result 1 in a.go has an incomplete region 1:1:0:2"},
 	}
-	for _, uri := range []string{"", "./", "/tmp/a.go", `C:\x\a.go`, "c:/x/a.go", "..", "../a.go", `..\a.go`, `.\..\a.go`, "file:///tmp/a.go"} {
+	for _, uri := range []string{"", ".", "./", "b.go", "A.go", "/a.go", "/tmp/a.go", "c:/x/a.go", "..", "../a.go", "sub/../../a.go", "file:///a.go"} {
 		uriJSON, _ := json.Marshal(uri)
 		tests = append(tests, struct{ name, result, err string }{
 			"uri " + uri,
 			`{"locations":[{"physicalLocation":{"artifactLocation":{"uri":` + string(uriJSON) + `},` + region + `}}]}`,
-			"result 1 has uri " + strconv.Quote(uri) + ", which is not a path in the fixture",
+			"result 1 has uri " + strconv.Quote(uri) + ", which is not a sample of the fixture",
 		})
 	}
 	for _, tt := range tests {
@@ -305,7 +307,7 @@ func TestRenderErrors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("DecodeSARIF(%s): %v", data, err)
 			}
-			got, err := Render(log, nil)
+			got, err := Render(log, []string{"a.go", "sub/a.go"})
 			if got != nil || errText(err) != tt.err {
 				t.Errorf("Render(%s) = %q, %q; want nil, %q", data, got, errText(err), tt.err)
 			}
@@ -356,6 +358,89 @@ func TestEscape(t *testing.T) {
 		if got := escape(tt.in); got != tt.want {
 			t.Errorf("escape(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestSamplePath(t *testing.T) {
+	samples := []string{"a.go", `a\b.txt`, "a/b.txt", "c:/x.txt", "sub/a.go"}
+	tests := []struct {
+		uri  string
+		sep  byte
+		want string // "" when the uri names no sample
+	}{
+		{"a.go", '/', "a.go"},
+		{"./sub/a.go", '/', "sub/a.go"},
+		{"sub//./a.go", '/', "sub/a.go"},
+		{"sub/../a.go", '/', "a.go"},
+		{"c:/x.txt", '/', "c:/x.txt"},
+		{`a\b.txt`, '/', `a\b.txt`},
+		{"a/b.txt", '/', "a/b.txt"},
+		{`.\a.go`, '/', ""},
+		{`sub\a.go`, '/', ""},
+		{"", '/', ""},
+		{".", '/', ""},
+		{"/a.go", '/', ""},
+		{"../a.go", '/', ""},
+		{"sub/../../a.go", '/', ""},
+		{"file:///a.go", '/', ""},
+		{"A.go", '/', ""},
+
+		{`.\sub\a.go`, '\\', "sub/a.go"},
+		{`sub\a.go`, '\\', "sub/a.go"},
+		{"./sub/a.go", '\\', "sub/a.go"},
+		{`a\b.txt`, '\\', "a/b.txt"},
+		{`C:\x\a.go`, '\\', ""},
+		{`..\a.go`, '\\', ""},
+	}
+	for _, tt := range tests {
+		got, ok := samplePath(tt.uri, samples, tt.sep)
+		if !ok {
+			got = ""
+		}
+		if got != tt.want {
+			t.Errorf("samplePath(%q, %q) = %q, %v; want %q", tt.uri, tt.sep, got, ok, tt.want)
+		}
+	}
+}
+
+// On Unix, sample names may hold a backslash, and a directory may be named
+// like a Windows drive.
+func TestRenderUnixNames(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows forbids these file names")
+	}
+	dir := t.TempDir()
+	t.Chdir(dir)
+	fx := filepath.Join(testRoot, "x", "names")
+	files := map[string]string{"rule.ref": "x\n", `a\b.txt`: "TODO\n", "a/b.txt": "TODO\n", "c:/x.txt": "TODO\n"}
+	for name, data := range files {
+		p := filepath.Join(fx, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Skipf("file system forbids %q: %v", name, err)
+		}
+		if err := os.WriteFile(p, []byte(data), 0o600); err != nil {
+			t.Skipf("file system forbids %q: %v", name, err)
+		}
+	}
+	fixtures, err := Discover(testRoot, nil)
+	if err != nil || len(fixtures) != 1 || fixtures[0].Setup != nil {
+		t.Fatalf("Discover = %v, %v", fixtures, err)
+	}
+	samples := fixtures[0].Samples
+	if want := []string{"a/b.txt", `a\b.txt`, "c:/x.txt"}; !slices.Equal(samples, want) {
+		t.Fatalf("samples = %q, want %q", samples, want)
+	}
+	var results []any
+	for _, s := range samples {
+		results = append(results, result(s, [4]int{1, 1, 1, 5}, "m"))
+	}
+	log, err := DecodeSARIF(sarifLog(results, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "| a/b.txt:1:1:1:5 | m |\n| a\\\\b.txt:1:1:1:5 | m |\n| c:/x.txt:1:1:1:5 | m |\n"
+	if got, err := Render(log, samples); string(got) != want || err != nil {
+		t.Errorf("Render = %q, %v; want %q", got, err, want)
 	}
 }
 
