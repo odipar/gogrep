@@ -1,8 +1,10 @@
 # gogrep rules
 
-Opengrep rules in this directory are embedded in every gogrep build as the
-`gogrep` rule set and run by default, next to the rule sets pinned in
-`opengrep.json`.
+Opengrep rules in this directory are embedded in every gogrep build, and in
+every program that imports the Go package, as the `gogrep` rule set, and run
+by default next to the rule sets pinned in `opengrep.json`. Rules of the
+scanned directory's own `opengrep/gogrep/rules/` form the `project` rule
+set instead.
 
 Each rule gets the stable id `gogrep.<dir>.<rule id>`. Give rules the usual
 metadata (`category`, `confidence`, `subcategory`, ...) so query suites can

@@ -1,12 +1,3 @@
-// Package gogrep scans source trees with opengrep and gogrep's pinned rule
-// sets, selected with CodeQL-style query suites under stable rule ids, and
-// returns the results as SARIF and as typed findings. The gogrep command is
-// a thin layer over it.
-//
-// The package documentation covers how opengrep is obtained, the offline
-// guarantee, concurrency and memory, cancellation, untrusted repositories,
-// the files gogrep writes, what it reads from the process, stability and
-// licensing.
 package gogrep
 
 import (

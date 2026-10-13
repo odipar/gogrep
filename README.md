@@ -6,7 +6,8 @@ binary and pinned rule sets (about 2,100 rules), so scans need no internet
 access. On top of opengrep, gogrep adds query suites modelled on
 [CodeQL's](https://docs.github.com/en/code-security/codeql-cli/using-the-advanced-functionality-of-the-codeql-cli/creating-codeql-query-suites)
 for choosing which rules run, and reports SARIF results under the name
-`gogrep`.
+`gogrep`. The same scans are available to Go programs as a
+[library](#use-as-a-go-library).
 
 ## Install
 
@@ -483,6 +484,78 @@ pass through. That annotation-based runner is still available as
   verbatim: gogrep adds no rules, hands its own flags such as `--rule` to
   opengrep, and leaves SARIF as opengrep wrote it.
 
+## Use as a Go library
+
+Package [`github.com/odipar/gogrep`](https://pkg.go.dev/github.com/odipar/gogrep)
+gives Go programs what the command does, with results as data: the SARIF
+log and typed findings. It suits a tool that clones repositories and
+delegates scanning to gogrep. It needs Go 1.26 and uses only the standard
+library and `gopkg.in/yaml.v3`.
+
+```sh
+go get github.com/odipar/gogrep@latest
+```
+
+```go
+eng, err := gogrep.New(gogrep.Config{})
+if _, err := eng.Opengrep(ctx); errors.Is(err, gogrep.ErrNoOpengrep) {
+	_, err = eng.InstallOpengrep(ctx, nil) // the only network access; verified against opengrep.json
+}
+res, err := eng.Scan(ctx, "/abs/clone", &gogrep.ScanOptions{
+	Selection:      gogrep.Selection{Suites: []string{"security-extended"}},
+	NoProjectRules: true, // an untrusted clone
+	Jobs:           2,
+})
+for _, f := range res.Findings {
+	fmt.Println(f.RuleID, f.Path, f.StartLine, f.Level, f.Suppressed)
+}
+```
+
+`Engine` also lists rules (`Rules`) and suites (`Suites`), runs and accepts
+a repository's rule test fixtures (`Test`, `AcceptTests`), and prunes its
+cache (`PruneCache`). Every method takes an absolute directory, and the ones
+that run opengrep take a `context.Context`.
+
+- **Getting opengrep.** The module contains the rule sets but not the
+  opengrep binary. An engine runs `Config.Opengrep`, an opengrep the program
+  embeds (`Config.EmbeddedOpengrep`), the verified copy in gogrep's cache, or
+  an `opengrep` on `PATH` with the pinned SHA-256, in that order.
+  `Engine.InstallOpengrep` downloads the pinned release into the cache and
+  checks it against [opengrep.json](opengrep.json); `InstallOptions.From`
+  installs a local copy of the release asset instead, and
+  `gogrep install-opengrep` fills the same cache.
+- **Offline.** Only `InstallOpengrep` uses the network. Scans pass
+  `--disable-version-check` and remove `SEMGREP_*` and `OPENGREP_*` from
+  opengrep's environment.
+- **Concurrency and memory.** One `Engine` is safe for concurrent use; share
+  it. Each scan takes about 250 to 360 MB, and the engine limits nothing
+  itself: to scan N repositories at once, bound N yourself and set
+  `ScanOptions.Jobs` so that N × Jobs is about the number of CPUs. A done
+  context kills opengrep's whole process tree; the package handles no
+  signals and never changes the working directory or the standard streams.
+- **Untrusted repositories.** By default a repository's own
+  `opengrep/gogrep` rules and suites take part, as with the command. Set
+  `NoProjectRules` for clones you do not trust, and `TestOptions.ReadOnly`
+  to run their fixtures without writing into them. Findings that `nosemgrep`
+  suppresses are kept, with `Suppressed` set.
+- **Stability.** The API is new in v0.4.0 and is v0: a minor release may
+  change it and lists every change under "API changes" in its release
+  notes; a patch release never does. `Command`, `CommandOptions` and `Cmd`
+  are experimental. Rule ids stay stable; re-pinning opengrep or a rule set
+  happens only in minor releases and can change findings.
+- **Licensing.** Go links statically, so a program that imports gogrep
+  contains it, and distributing that program as a binary means meeting
+  LGPL-2.1's conditions for a work that uses the library: pass on the
+  license and notices, gogrep's source, and a way to relink the program with
+  a modified gogrep (such as its source or object files). The program also
+  contains the rule sets: opengrep-rules carries the Commons Clause, which
+  grants no right to sell a product or service whose value derives entirely
+  or substantially from those rules. See [NOTICE.md](NOTICE.md).
+
+The [package documentation](https://pkg.go.dev/github.com/odipar/gogrep)
+has the details, and a worked example of a command that scans many clones at
+once is in [docs/design/library-api.md](docs/design/library-api.md#6-worked-example-a-consumer-cli).
+
 ## Building
 
 ```sh
@@ -523,5 +596,7 @@ platform as a GitHub release.
 ## License
 
 gogrep is licensed under the GNU Lesser General Public License v2.1, like
-opengrep. Release builds bundle third-party components under their own
-licenses; see [NOTICE.md](NOTICE.md).
+opengrep. Every build, and every program that imports the Go package,
+contains third-party rule sets under their own licenses, and release builds
+also contain opengrep; see [NOTICE.md](NOTICE.md) and, for Go programs,
+[Use as a Go library](#use-as-a-go-library).

@@ -9,6 +9,15 @@ builds (`-tags gogrep_bundled`) also contain the opengrep binary. Each of
 these third-party components is under its own license, and their versions
 are pinned in [opengrep.json](opengrep.json).
 
+A Go program that imports the package `github.com/odipar/gogrep` contains
+gogrep and the rule sets, as Go links packages statically, but not opengrep,
+unless the program embeds it itself (`Config.EmbeddedOpengrep`). Whoever
+distributes such a program as a binary must meet the conditions of
+LGPL-2.1 for a work that uses the library, among them passing on this
+notice, the license and gogrep's source code, and letting recipients relink
+the program with a modified gogrep, as well as the conditions of each rule
+set's license below.
+
 ## opengrep
 
 - Source: https://github.com/opengrep/opengrep

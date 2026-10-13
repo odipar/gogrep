@@ -2,8 +2,9 @@
 
 A suite picks which rules a scan runs, modelled on
 [CodeQL query suites](https://docs.github.com/en/code-security/codeql-cli/using-the-advanced-functionality-of-the-codeql-cli/creating-codeql-query-suites).
-The `.yaml` files here are gogrep's built-in suites. A project can add its
-own, or override a built-in one, in `opengrep/gogrep/suites/<name>.yaml`.
+The `.yaml` files here are gogrep's built-in suites, embedded in every build
+and in the Go package. A project can add its own, or override a built-in
+one, in `opengrep/gogrep/suites/<name>.yaml` of the scanned directory.
 
 ```sh
 gogrep scan .                            # the default suite, code-scanning
@@ -35,7 +36,7 @@ A suite is a YAML list of instructions, applied in order:
 
 | Instruction | Meaning |
 |---|---|
-| `rules` | Add a rule set: `opengrep-rules`, `0xdea`, `semgrep-go` (pinned in `opengrep.json`), `gogrep` (this repo's `rules/`), `project` (`opengrep/gogrep/rules/` in the current directory, except `test/` in any letter case), or the groups `bundled` (all pinned sets) and `all`. |
+| `rules` | Add a rule set: `opengrep-rules`, `0xdea`, `semgrep-go` (pinned in `opengrep.json`), `gogrep` (this repo's `rules/`), `project` (`opengrep/gogrep/rules/` of the scanned directory, which for the gogrep command is the current directory, except `test/` in any letter case), or the groups `bundled` (all pinned sets) and `all`. |
 | `import` | Add the rules another suite selects, by name or path. |
 | `include` / `exclude` | Filter the rules located so far on their fields. |
 
