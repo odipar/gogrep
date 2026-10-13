@@ -1,5 +1,5 @@
-// Package rules writes gogrep's embedded rule sets to disk, filtered by rule
-// set, language and category, so opengrep can load them with --config.
+// Package rules parses gogrep's rule sets into individual rules with stable,
+// qualified ids, and writes a selection of them to one opengrep config file.
 package rules
 
 import (
@@ -15,21 +15,15 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // A Set is a named rule set: file contents keyed by slash-separated path.
-// Rule files are YAML; anything else (LICENSE, NOTICE) is carried along.
+// Rule files are YAML; anything else (LICENSE, NOTICE) is ignored here.
 type Set map[string][]byte
-
-// Filter selects rule files. An empty field matches everything.
-type Filter struct {
-	Sets       []string // rule set names
-	Langs      []string // top-level directory of the rule file, e.g. "go"
-	Categories []string // metadata.category of any rule in the file, e.g. "security"
-}
 
 // FromTarGz reads a gzipped tar of rule files.
 func FromTarGz(data []byte) (Set, error) {
@@ -69,113 +63,191 @@ func FromFS(fsys fs.FS) (Set, error) {
 	return set, err
 }
 
-// Dir writes the files of sets that pass f to <user cache>/gogrep/rules/<key>/<set>/,
-// reusing an identical earlier result, and returns that directory with the
-// number of rule files in it.
-func Dir(sets map[string]Set, f Filter) (dir string, n int, err error) {
-	selected := map[string]Set{}
-	for name, set := range sets {
-		if len(f.Sets) > 0 && !slices.Contains(f.Sets, name) {
-			continue
-		}
-		sel := Set{}
-		rules := 0
-		for p, data := range set {
-			if !isRule(p) {
-				sel[p] = data
+// A Rule is one opengrep rule from a rule set.
+type Rule struct {
+	// ID is the stable qualified id <set>.<dir>.<id>, with dots for the
+	// slashes of the rule file's directory, like opengrep's own rewriting
+	// but relative to the set. On a clash the file name goes before <id>.
+	ID   string
+	Set  string
+	Path string // rule file path within the set
+
+	node   *yaml.Node          // the rule's mapping node
+	fields map[string][]string // values suites match on, see Fields
+}
+
+// Fields returns the values a suite qualifier can match, keyed by name:
+// id, ruleset, path, severity, message, languages, and every scalar or
+// list-of-scalars metadata field, both prefixed (metadata.category) and bare
+// (category) unless the bare name is one of the others.
+func (r *Rule) Fields() map[string][]string { return r.fields }
+
+// Parse returns the rules of all sets, sorted by ID.
+func Parse(sets map[string]Set) ([]*Rule, error) {
+	var all []*Rule
+	for _, name := range slices.Sorted(maps.Keys(sets)) {
+		seen := map[string]bool{}
+		set := sets[name]
+		for _, p := range slices.Sorted(maps.Keys(set)) {
+			if ext := path.Ext(p); ext != ".yaml" && ext != ".yml" {
 				continue
 			}
-			if matches(p, data, f) {
-				sel[p] = data
-				rules++
+			rules, err := parseFile(name, p, set[p], seen)
+			if err != nil {
+				return nil, fmt.Errorf("%s/%s: %w", name, p, err)
 			}
-		}
-		if rules > 0 {
-			selected[name] = sel
-			n += rules
+			all = append(all, rules...)
 		}
 	}
-	if n == 0 {
-		return "", 0, nil
+	slices.SortFunc(all, func(a, b *Rule) int { return strings.Compare(a.ID, b.ID) })
+	return all, nil
+}
+
+func parseFile(set, p string, data []byte, seen map[string]bool) ([]*Rule, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	if len(doc.Content) == 0 {
+		return nil, nil
+	}
+	list := value(doc.Content[0], "rules")
+	if list == nil || list.Kind != yaml.SequenceNode {
+		return nil, nil // not a rule file
+	}
+
+	prefix := set
+	if dir := path.Dir(p); dir != "." {
+		prefix += "." + strings.ReplaceAll(dir, "/", ".")
+	}
+	var out []*Rule
+	for _, n := range list.Content {
+		idNode := value(n, "id")
+		if idNode == nil || idNode.Value == "" {
+			continue
+		}
+		id := prefix + "." + idNode.Value
+		if seen[id] {
+			id = prefix + "." + strings.TrimSuffix(path.Base(p), path.Ext(p)) + "." + idNode.Value
+		}
+		seen[id] = true
+		r := &Rule{ID: id, Set: set, Path: p, node: n}
+		r.fields = fields(r, n)
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// value returns the value node for key in mapping node m, or nil.
+func value(m *yaml.Node, key string) *yaml.Node {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// scalars returns n's value as a list of strings when it is a scalar or a
+// sequence of scalars, and nil otherwise.
+func scalars(n *yaml.Node) []string {
+	switch {
+	case n == nil:
+		return nil
+	case n.Kind == yaml.ScalarNode:
+		return []string{n.Value}
+	case n.Kind == yaml.SequenceNode:
+		var vs []string
+		for _, c := range n.Content {
+			if c.Kind != yaml.ScalarNode {
+				return nil
+			}
+			vs = append(vs, c.Value)
+		}
+		return vs
+	}
+	return nil
+}
+
+func fields(r *Rule, n *yaml.Node) map[string][]string {
+	f := map[string][]string{
+		"id":      {r.ID},
+		"ruleset": {r.Set},
+		"path":    {r.Path},
+	}
+	for _, k := range []string{"severity", "message", "languages"} {
+		if vs := scalars(value(n, k)); vs != nil {
+			f[k] = vs
+		}
+	}
+	md := value(n, "metadata")
+	if md == nil || md.Kind != yaml.MappingNode {
+		return f
+	}
+	for i := 0; i+1 < len(md.Content); i += 2 {
+		k, vs := md.Content[i].Value, scalars(md.Content[i+1])
+		if vs == nil {
+			continue
+		}
+		f["metadata."+k] = vs
+		if _, taken := f[k]; !taken {
+			f[k] = vs
+		}
+	}
+	return f
+}
+
+// Write writes rules to one opengrep config file under
+// <user cache>/gogrep/selections/, with each rule's id replaced by its
+// qualified ID, and returns its path. Run opengrep with --no-rewrite-rule-ids
+// to keep those ids. Identical selections share one file.
+func Write(rules []*Rule) (string, error) {
+	seq := &yaml.Node{Kind: yaml.SequenceNode}
+	for _, r := range rules {
+		n := *r.node
+		n.Content = slices.Clone(n.Content)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if n.Content[i].Value == "id" {
+				n.Content[i+1] = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: r.ID}
+			}
+		}
+		seq.Content = append(seq.Content, &n)
+	}
+	doc := &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "rules"}, seq,
+	}}
+	data, err := yaml.Marshal(doc)
+	if err != nil {
+		return "", err
 	}
 
 	cache, err := os.UserCacheDir()
 	if err != nil {
-		return "", 0, err
+		return "", err
 	}
-	dir = filepath.Join(cache, "gogrep", "rules", key(selected))
-	if _, err := os.Stat(dir); err == nil {
-		return dir, n, nil
+	sum := sha256.Sum256(data)
+	dir := filepath.Join(cache, "gogrep", "selections")
+	file := filepath.Join(dir, hex.EncodeToString(sum[:])[:16]+".yaml")
+	if _, err := os.Stat(file); err == nil {
+		return file, nil
 	}
-	return dir, n, write(dir, selected)
-}
-
-func isRule(p string) bool {
-	ext := path.Ext(p)
-	return ext == ".yaml" || ext == ".yml"
-}
-
-var categoryRE = regexp.MustCompile(`(?m)^\s+category:\s*["']?([\w-]+)`)
-
-func matches(p string, data []byte, f Filter) bool {
-	if len(f.Langs) > 0 {
-		lang, _, ok := strings.Cut(p, "/")
-		if !ok || !slices.Contains(f.Langs, lang) {
-			return false
-		}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
 	}
-	if len(f.Categories) > 0 {
-		for _, m := range categoryRE.FindAllSubmatch(data, -1) {
-			if slices.Contains(f.Categories, string(m[1])) {
-				return true
-			}
-		}
-		return false
-	}
-	return true
-}
-
-// key hashes the selected files, so any change in rules or filter gets its
-// own directory.
-func key(sets map[string]Set) string {
-	h := sha256.New()
-	for _, name := range slices.Sorted(maps.Keys(sets)) {
-		for _, p := range slices.Sorted(maps.Keys(sets[name])) {
-			fmt.Fprintf(h, "%s/%s\x00%d\x00", name, p, len(sets[name][p]))
-			h.Write(sets[name][p])
-		}
-	}
-	return hex.EncodeToString(h.Sum(nil))[:16]
-}
-
-// write fills a temp dir and renames it into place, so concurrent gogrep runs
-// never see a half-written rule directory.
-func write(dir string, sets map[string]Set) error {
-	parent := filepath.Dir(dir)
-	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.MkdirTemp(parent, ".tmp-")
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
-		return err
+		return "", err
 	}
-	defer os.RemoveAll(tmp)
-	for name, set := range sets {
-		for p, data := range set {
-			dst := filepath.Join(tmp, name, filepath.FromSlash(p))
-			if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-				return err
-			}
-			if err := os.WriteFile(dst, data, 0o600); err != nil {
-				return err
-			}
-		}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return "", err
 	}
-	if err := os.Rename(tmp, dir); err != nil {
-		if _, statErr := os.Stat(dir); statErr == nil {
-			return nil // another gogrep run got there first
-		}
-		return err
+	if err := tmp.Close(); err != nil {
+		return "", err
 	}
-	return nil
+	return file, os.Rename(tmp.Name(), file)
 }

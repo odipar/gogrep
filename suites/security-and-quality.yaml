@@ -1,0 +1,7 @@
+- description: Security plus correctness, best-practice, performance and maintainability rules
+- rules: bundled
+- include:
+    category: [security, correctness, best-practice, performance, maintainability, portability, compatibility]
+- include:
+    ruleset: semgrep-go # Go correctness rules without category metadata
+- rules: [gogrep, project]

@@ -1,0 +1,7 @@
+- description: High-signal security rules (likely vulnerabilities); gogrep's default
+- rules: bundled
+- include:
+    category: security
+    subcategory: vuln
+    confidence: [HIGH, MEDIUM]
+- rules: [gogrep, project]

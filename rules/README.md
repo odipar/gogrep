@@ -4,11 +4,7 @@ Opengrep rules in this directory are embedded in every gogrep build as the
 `gogrep` rule set and run by default, next to the rule sets pinned in
 `opengrep.json`.
 
-Lay them out like opengrep-rules, so `--gogrep-lang` and `--gogrep-category`
-can filter them:
-
-    rules/<language>/<anything>/<rule>.yaml
-
-where `<language>` is the top-level directory (`go`, `python`, `generic`, ...)
-and each rule sets `metadata.category` (`security`, `correctness`,
-`best-practice`, ...).
+Each rule gets the stable id `gogrep.<dir>.<rule id>`. Give rules the usual
+metadata (`category`, `confidence`, `subcategory`, ...) so query suites can
+select them; see [../suites/README.md](../suites/README.md). The built-in
+suites run every `gogrep` rule.

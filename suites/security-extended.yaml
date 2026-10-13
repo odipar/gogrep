@@ -1,0 +1,5 @@
+- description: All security rules, including lower-confidence and audit rules
+- rules: bundled
+- include:
+    category: security
+- rules: [gogrep, project]

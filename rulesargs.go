@@ -2,14 +2,21 @@ package main
 
 import (
 	"embed"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/odipar/gogrep/internal/bundle"
 	"github.com/odipar/gogrep/internal/rules"
+	"github.com/odipar/gogrep/internal/suite"
 )
 
 // ownRules is the repo's rules directory, embedded in every build as the
@@ -18,59 +25,88 @@ import (
 //go:embed rules
 var ownRules embed.FS
 
-// projectRulesDir holds a project's own rules; scans using the bundled rules
-// add it when it exists in the current directory.
-var projectRulesDir = filepath.Join("opengrep", "gogrep", "rules")
-
-// bundledConfig is the --config value that names the bundled rules explicitly.
-const bundledConfig = "bundled"
-
-// gogrepFlags removes gogrep's own flags from args and returns the rule filter
-// they set. Each takes a comma-separated list and may be repeated:
+// builtinSuites are the suites shipped with gogrep, by file name without .yaml.
 //
-//	--gogrep-ruleset  rule sets, e.g. opengrep-rules,gogrep
-//	--gogrep-lang     languages (top-level rule directory), e.g. go,python
-//	--gogrep-category metadata.category, e.g. security,correctness
-func gogrepFlags(args []string) (rest []string, f rules.Filter, err error) {
-	targets := map[string]*[]string{
-		"--gogrep-ruleset":  &f.Sets,
-		"--gogrep-lang":     &f.Langs,
-		"--gogrep-category": &f.Categories,
+//go:embed suites/*.yaml
+var builtinSuites embed.FS
+
+// A project's own rules and suites live under opengrep/gogrep in the current
+// directory. Project rules form the "project" rule set; a project suite
+// shadows a built-in one of the same name.
+var (
+	projectRulesDir  = filepath.Join("opengrep", "gogrep", "rules")
+	projectSuitesDir = filepath.Join("opengrep", "gogrep", "suites")
+)
+
+const (
+	defaultSuite  = "code-scanning"
+	bundledConfig = "bundled" // --config value that selects the bundled rules
+)
+
+// selection is how gogrep's own flags select rules.
+type selection struct {
+	suites   []string       // --suite: names or paths, unioned
+	rules    []string       // --rule: ids, id suffixes or /regex/, unioned
+	narrow   []*suite.Suite // --gogrep-ruleset/-lang/-category, ANDed
+	explicit bool           // --suite or --rule given
+}
+
+// gogrepFlags removes gogrep's own flags from args. --suite and --rule pick
+// rules (default: the code-scanning suite); the --gogrep-* filters narrow
+// that selection. All take comma-separated lists and may be repeated.
+func gogrepFlags(args []string) (rest []string, sel selection, err error) {
+	narrowField := map[string]string{
+		"--gogrep-ruleset":  "ruleset",
+		"--gogrep-lang":     "languages",
+		"--gogrep-category": "category",
 	}
 	for i := 0; i < len(args); i++ {
 		name, val, hasVal := strings.Cut(args[i], "=")
-		dst, ok := targets[name]
-		if !ok {
+		field, isNarrow := narrowField[name]
+		if name != "--suite" && name != "--rule" && !isNarrow {
 			rest = append(rest, args[i])
 			continue
 		}
 		if !hasVal {
 			if i+1 == len(args) {
-				return nil, f, fmt.Errorf("%s needs a value", name)
+				return nil, sel, fmt.Errorf("%s needs a value", name)
 			}
 			i++
 			val = args[i]
 		}
+		var vals []string
 		for _, v := range strings.Split(val, ",") {
 			if v = strings.TrimSpace(v); v != "" {
-				*dst = append(*dst, v)
+				vals = append(vals, v)
 			}
 		}
+		switch name {
+		case "--suite":
+			sel.suites, sel.explicit = append(sel.suites, vals...), true
+		case "--rule":
+			sel.rules, sel.explicit = append(sel.rules, vals...), true
+		default:
+			f, err := suite.Filter(true, field, vals...)
+			if err != nil {
+				return nil, sel, fmt.Errorf("%s: %w", name, err)
+			}
+			sel.narrow = append(sel.narrow, f)
+		}
 	}
-	return rest, f, nil
+	return rest, sel, nil
 }
 
-// withRules points a scan at the bundled rules when it names no rules itself
-// (no --config, -e/--pattern or $SEMGREP_RULES), and expands --config bundled.
-// The bundled rules are the embedded rule sets that pass f plus, when present,
-// the project's rules in projectRulesDir.
-func withRules(args []string, f rules.Filter) ([]string, error) {
+// withRules points a scan at the selected bundled rules when it names no
+// rules itself (no --config, -e/--pattern or $SEMGREP_RULES), when it uses
+// --config bundled, or when --suite or --rule is given. The selection goes to
+// opengrep as one generated config with stable rule ids.
+func withRules(args []string, sel selection) ([]string, error) {
 	if len(args) == 0 || args[0] != "scan" {
 		return args, nil
 	}
 
 	var out []string
-	explicit, useBundled := os.Getenv("SEMGREP_RULES") != "", false
+	explicit, useBundled := os.Getenv("SEMGREP_RULES") != "", sel.explicit
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -93,30 +129,99 @@ func withRules(args []string, f rules.Filter) ([]string, error) {
 		return args, nil
 	}
 
-	dirs, err := bundledRuleDirs(f)
+	env, err := loadEnv()
 	if err != nil {
 		return nil, err
 	}
-	if len(dirs) == 0 {
+	if env.Count() == 0 {
 		if useBundled {
-			return nil, fmt.Errorf("no bundled rules match the --gogrep-* filters")
+			return nil, errors.New("this gogrep build has no bundled rules")
 		}
-		return args, nil // nothing bundled: let opengrep report the missing config
+		return args, nil // nothing bundled: leave the scan to opengrep
 	}
-	for _, d := range dirs {
-		out = append(out, "--config", d)
+	selected, err := sel.resolve(env)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	file, err := rules.Write(selected)
+	if err != nil {
+		return nil, fmt.Errorf("writing selected rules: %w", err)
+	}
+	return append(out, "--config", file, "--no-rewrite-rule-ids"), nil
 }
 
-func bundledRuleDirs(f rules.Filter) ([]string, error) {
+// resolve returns the rules sel selects: the union of its suites and rules
+// (or the default suite), narrowed by its filters.
+func (sel selection) resolve(env *suite.Env) ([]*rules.Rule, error) {
+	var picked []*rules.Rule
+	suites := sel.suites
+	if !sel.explicit {
+		suites = []string{defaultSuite}
+	}
+	for _, name := range suites {
+		s, err := env.Load(name)
+		if err != nil {
+			return nil, err
+		}
+		rs, err := s.Select(env)
+		if err != nil {
+			return nil, err
+		}
+		picked = append(picked, rs...)
+	}
+	for _, id := range sel.rules {
+		rs, err := ruleByID(env, id)
+		if err != nil {
+			return nil, err
+		}
+		picked = append(picked, rs...)
+	}
+	picked = suite.Narrow(dedupe(picked), sel.narrow...)
+	if len(picked) == 0 {
+		return nil, errors.New("the --suite/--rule/--gogrep-* selection matches no rules")
+	}
+	return picked, nil
+}
+
+// ruleByID selects rules whose qualified id is id, ends in "."+id, or
+// matches /regex/.
+func ruleByID(env *suite.Env, id string) ([]*rules.Rule, error) {
+	pattern := id
+	if !(len(id) >= 2 && strings.HasPrefix(id, "/") && strings.HasSuffix(id, "/")) {
+		pattern = `/(^|\.)` + regexp.QuoteMeta(id) + `$/`
+	}
+	f, err := suite.Filter(true, "id", pattern)
+	if err != nil {
+		return nil, fmt.Errorf("--rule %s: %w", id, err)
+	}
+	var all []*rules.Rule
+	for _, set := range slices.Sorted(maps.Keys(env.Sets)) {
+		all = append(all, env.Sets[set]...)
+	}
+	rs := suite.Narrow(all, f)
+	if len(rs) == 0 {
+		return nil, fmt.Errorf("--rule %s matches no rule; list them with: gogrep rules --suite all", id)
+	}
+	return rs, nil
+}
+
+func dedupe(rs []*rules.Rule) []*rules.Rule {
+	slices.SortFunc(rs, func(a, b *rules.Rule) int { return strings.Compare(a.ID, b.ID) })
+	return slices.Compact(rs)
+}
+
+// loadEnv parses all rule sets: the bundled ones, gogrep's own and the
+// project's. Groups: "bundled" (the pinned third-party sets) and "all".
+func loadEnv() (*suite.Env, error) {
 	sets := map[string]rules.Set{}
+	var bundled []string
 	for name, archive := range bundle.RuleSets() {
 		set, err := rules.FromTarGz(archive)
 		if err != nil {
 			return nil, fmt.Errorf("reading bundled rule set %s: %w", name, err)
 		}
 		sets[name] = set
+		bundled = append(bundled, name)
 	}
 	own, err := fs.Sub(ownRules, "rules")
 	if err != nil {
@@ -125,17 +230,117 @@ func bundledRuleDirs(f rules.Filter) ([]string, error) {
 	if sets["gogrep"], err = rules.FromFS(own); err != nil {
 		return nil, err
 	}
-
-	var dirs []string
-	dir, n, err := rules.Dir(sets, f)
-	if err != nil {
-		return nil, fmt.Errorf("writing bundled rules: %w", err)
-	}
-	if n > 0 {
-		dirs = append(dirs, dir)
-	}
+	sets["project"] = rules.Set{}
 	if fi, err := os.Stat(projectRulesDir); err == nil && fi.IsDir() {
-		dirs = append(dirs, projectRulesDir)
+		if sets["project"], err = rules.FromFS(os.DirFS(projectRulesDir)); err != nil {
+			return nil, fmt.Errorf("reading %s: %w", projectRulesDir, err)
+		}
 	}
-	return dirs, nil
+
+	parsed, err := rules.Parse(sets)
+	if err != nil {
+		return nil, err
+	}
+	env := &suite.Env{
+		Sets:   map[string][]*rules.Rule{},
+		Groups: map[string][]string{"bundled": bundled, "all": slices.Collect(maps.Keys(sets))},
+		Load:   loadSuite,
+	}
+	for name := range sets {
+		env.Sets[name] = nil
+	}
+	for _, r := range parsed {
+		env.Sets[r.Set] = append(env.Sets[r.Set], r)
+	}
+	return env, nil
+}
+
+// loadSuite finds a suite by file path, then in the project's suites, then
+// among the built-in ones.
+func loadSuite(name string) (*suite.Suite, error) {
+	if strings.ContainsAny(name, `/\`) || strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			return nil, err
+		}
+		return suite.Parse(name, data)
+	}
+	for _, ext := range []string{".yaml", ".yml"} {
+		if data, err := os.ReadFile(filepath.Join(projectSuitesDir, name+ext)); err == nil {
+			return suite.Parse(name, data)
+		}
+	}
+	if data, err := builtinSuites.ReadFile("suites/" + name + ".yaml"); err == nil {
+		return suite.Parse(name, data)
+	}
+	return nil, fmt.Errorf("unknown suite %q; list them with: gogrep suites", name)
+}
+
+// listRules implements `gogrep rules`: print the rules a selection picks.
+func listRules(w io.Writer, sel selection) error {
+	env, err := loadEnv()
+	if err != nil {
+		return err
+	}
+	rs, err := sel.resolve(env)
+	if err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tSEVERITY\tCATEGORY\tCONFIDENCE\tLANGUAGES")
+	for _, r := range rs {
+		f := r.Fields()
+		get := func(k string) string {
+			if v := strings.Join(f[k], ","); v != "" {
+				return v
+			}
+			return "-"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.ID, get("severity"), get("category"), get("confidence"), get("languages"))
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if len(rs) == 1 {
+		fmt.Fprintln(os.Stderr, "1 rule")
+	} else {
+		fmt.Fprintf(os.Stderr, "%d rules\n", len(rs))
+	}
+	return nil
+}
+
+// listSuites implements `gogrep suites`: print the available suites.
+func listSuites(w io.Writer) error {
+	names := map[string]string{}
+	entries, _ := builtinSuites.ReadDir("suites")
+	for _, e := range entries {
+		names[strings.TrimSuffix(e.Name(), ".yaml")] = "built-in"
+	}
+	entries, _ = os.ReadDir(projectSuitesDir)
+	for _, e := range entries {
+		if ext := filepath.Ext(e.Name()); ext == ".yaml" || ext == ".yml" {
+			names[strings.TrimSuffix(e.Name(), ext)] = "project"
+		}
+	}
+	env, err := loadEnv()
+	if err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SUITE\tSOURCE\tRULES\tDESCRIPTION")
+	for _, name := range slices.Sorted(maps.Keys(names)) {
+		s, err := loadSuite(name)
+		if err != nil {
+			return err
+		}
+		count := "-"
+		if rs, err := s.Select(env); err == nil {
+			count = fmt.Sprint(len(rs))
+		}
+		if name == defaultSuite {
+			name += " (default)"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, names[strings.TrimSuffix(name, " (default)")], count, s.Description)
+	}
+	return tw.Flush()
 }

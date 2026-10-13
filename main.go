@@ -20,13 +20,23 @@ func main() {
 }
 
 func run(args []string) int {
-	args, filter, err := gogrepFlags(args)
-	if err == nil {
-		args, err = withRules(args, filter)
+	args, sel, err := gogrepFlags(args)
+	if err == nil && len(args) > 0 {
+		switch args[0] {
+		case "rules":
+			err = listRules(os.Stdout, sel)
+		case "suites":
+			err = listSuites(os.Stdout)
+		default:
+			args, err = withRules(args, sel)
+		}
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gogrep: %v\n", err)
 		return 2
+	}
+	if len(args) > 0 && (args[0] == "rules" || args[0] == "suites") {
+		return 0
 	}
 	sarifFiles, sarifStdout := sarifTargets(args)
 
