@@ -102,7 +102,9 @@ func gogrepFlags(args []string) (rest []string, sel selection, err error) {
 // withRules points a scan at the selected bundled rules when it names no
 // rules itself (no --config, -e/--pattern or $SEMGREP_RULES), when it uses
 // --config bundled, or when --suite or --rule is given. The selection goes to
-// opengrep as one generated config with stable rule ids.
+// opengrep as one generated config with stable rule ids, and the scan skips
+// the project's rule test fixtures: a project .semgrepignore replaces
+// opengrep's default exclusion of test/ directories.
 func withRules(args []string, sel selection) ([]string, error) {
 	if len(args) == 0 || args[0] != "scan" {
 		return args, nil
@@ -150,7 +152,9 @@ func withRules(args []string, sel selection) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("writing selected rules: %w", err)
 	}
-	return append(out, "--config", file, "--no-rewrite-rule-ids"), nil
+	// Insert right after "scan": after a user's "--" they would be targets.
+	own := []string{"--config", file, "--no-rewrite-rule-ids", "--exclude=" + filepath.ToSlash(projectTestsDir)}
+	return slices.Concat(out[:1], own, out[1:]), nil
 }
 
 // resolve returns the rules sel selects: the union of its suites and rules
