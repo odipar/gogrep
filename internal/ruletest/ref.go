@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/odipar/gogrep/internal/rules"
 )
@@ -14,9 +15,16 @@ import (
 const maxSuggestions = 5
 
 // ParseRef returns the rule reference in a rule.ref file: its only line that
-// is neither blank nor a # comment, trimmed. A leading UTF-8 BOM is ignored
-// and CRLF line ends are accepted.
+// is neither blank nor a # comment, trimmed. The file must be UTF-8; a
+// leading BOM is ignored and CRLF line ends are accepted.
 func ParseRef(data []byte) (string, error) {
+	switch {
+	case bytes.HasPrefix(data, []byte{0xFF, 0xFE}) || bytes.HasPrefix(data, []byte{0xFE, 0xFF}) || bytes.IndexByte(data, 0) >= 0:
+		// As Windows PowerShell 5.1 writes it: echo no-exec-command > rule.ref
+		return "", errors.New("rule.ref must be UTF-8 text (found UTF-16)")
+	case !utf8.Valid(data):
+		return "", errors.New("rule.ref must be UTF-8 text")
+	}
 	data = bytes.TrimPrefix(data, []byte("\uFEFF"))
 	var refs []string
 	for _, line := range strings.Split(string(data), "\n") {

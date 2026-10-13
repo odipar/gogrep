@@ -24,6 +24,10 @@ func TestParseRef(t *testing.T) {
 		{"three references", "a\r\n# b\r\nc\r\nd", "", "rule.ref has 3 references; a fixture tests exactly one rule"},
 		{"regex", "/exec/\n", "", "a fixture must name one rule, not a /regex/"},
 		{"option", "no-exec-command\nseverity: ERROR\n", "", `unsupported option "severity: ERROR" in rule.ref`},
+		{"UTF-16LE", "\xff\xfen\x00o\x00\r\x00\n\x00", "", "rule.ref must be UTF-8 text (found UTF-16)"},
+		{"UTF-16BE", "\xfe\xff\x00n\x00o", "", "rule.ref must be UTF-8 text (found UTF-16)"},
+		{"UTF-16LE without a BOM", "n\x00o\x00", "", "rule.ref must be UTF-8 text (found UTF-16)"},
+		{"Latin-1", "caf\xe9\n", "", "rule.ref must be UTF-8 text"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

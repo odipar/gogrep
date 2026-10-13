@@ -219,6 +219,8 @@ Each of these is a `SETUP` failure:
 
 | Content | Message |
 |---|---|
+| UTF-16: a UTF-16 byte order mark or a NUL byte, as Windows PowerShell 5.1 writes for `echo no-exec-command > rule.ref` | `rule.ref must be UTF-8 text (found UTF-16)` |
+| Other bytes that are not UTF-8 | `rule.ref must be UTF-8 text` |
 | Nothing left | `rule.ref is empty` |
 | Two or more lines | `rule.ref has <n> references; a fixture tests exactly one rule` |
 | `/regex/` | `a fixture must name one rule, not a /regex/` |
@@ -653,7 +655,7 @@ There are no `_test.go` files today. All new tests use the standard `testing` pa
 
 - `internal/rules`: `FromFS` skips top-level `test/` but keeps `go/tests/x.yaml` (via `fstest.MapFS`). Also the id scheme and clash rule, malformed YAML aborting, and non-rule YAML being ignored.
 - `ruletest/ref`:
-  - comments, BOM and CRLF in `rule.ref`;
+  - comments, BOM and CRLF in `rule.ref`, and UTF-16 or other bytes that are not UTF-8;
   - empty, multi-line, `/regex/` and `key: value` references;
   - each resolution step, nested namespaces, ambiguity across steps, not-found with did-you-mean, and the no-bundled-sets hint.
 - `ruletest/table`:
