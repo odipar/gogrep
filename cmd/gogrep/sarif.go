@@ -49,6 +49,24 @@ func sarifTargets(args []string) (files []string, toStdout bool) {
 	return files, toStdout
 }
 
+// writesNoResults reports whether args, before any "--", ask opengrep for
+// something other than results, for which it writes no SARIF even with
+// --sarif: help, its version, a check of rules (--validate, --test), the
+// AST of a file, or a listing of languages or targets.
+func writesNoResults(args []string) bool {
+	for _, a := range args {
+		switch {
+		case a == "--":
+			return false
+		case a == "-h" || a == "--help" || strings.HasPrefix(a, "--help=") || a == "--version" ||
+			a == "--validate" || a == "--test" || a == "--dump-ast" ||
+			a == "--show-supported-languages" || a == "--x-ls" || a == "--x-ls-long":
+			return true
+		}
+	}
+	return false
+}
+
 // rebrandFile rewrites the SARIF file at path in place with sarif.Rebrand,
 // and makes it readable by its owner only: opengrep creates it 0o644, and
 // os.WriteFile keeps the mode of a file that exists. valid reports whether

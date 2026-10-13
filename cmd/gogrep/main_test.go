@@ -201,6 +201,13 @@ func TestRunSARIFChecks(t *testing.T) {
 		{[]string{"scan", "--config", "r.yaml", "--sarif", "."}, 3, 3, "fake stderr\n"},
 		{[]string{"scan", "--config", "r.yaml", "--sarif-output=https://example.com/sarif", "."}, 0, 0, "fake stderr\n"},
 		{[]string{"scan", "--config", "r.yaml", "."}, 0, 0, "fake stderr\n"},
+		// Modes that write no results, and so no SARIF.
+		{[]string{"scan", "--sarif", "--config", "r.yaml", "--validate"}, 0, 0, "fake stderr\n"},
+		{[]string{"scan", "--sarif", "-o", "missing.sarif", "--validate"}, 0, 0, "fake stderr\n"},
+		{[]string{"scan", "--sarif", "--help"}, 0, 0, "fake stderr\n"},
+		{[]string{"scan", "--sarif", "--version"}, 0, 0, "fake stderr\n"},
+		{[]string{"scan", "--sarif", "--show-supported-languages"}, 0, 0, "fake stderr\n"},
+		{[]string{"scan", "--config", "r.yaml", "--sarif", "--", "--validate"}, 0, 2, "fake stderr\n" + noSARIF},
 	} {
 		t.Run(fmt.Sprintf("no SARIF, exit %d, %s", tt.exit, strings.Join(tt.args, " ")), func(t *testing.T) {
 			useFakeOpengrep(t, tt.exit)

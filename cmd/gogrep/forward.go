@@ -56,7 +56,7 @@ func (c *cli) forward(args []string, sel selection) int {
 		}
 		code = c.runCmd(ctx, cmd, !scan)
 		if ctx.Err() == nil {
-			code = c.checkSARIF(code, out.Bytes(), toStdout, files)
+			code = c.checkSARIF(code, out.Bytes(), toStdout, files, writesNoResults(cmd.Args[1:]))
 		}
 	}
 	if ctx.Err() != nil {
@@ -69,8 +69,9 @@ func (c *cli) forward(args []string, sel selection) int {
 // checkSARIF rebrands the SARIF that a command which exited with code wrote,
 // out to stdout if toStdout, and files, and returns gogrep's exit code. A
 // command that asked for SARIF and exited 0 without it failed, as when
-// opengrep's processes were killed behind its launcher's back.
-func (c *cli) checkSARIF(code int, out []byte, toStdout bool, files []string) int {
+// opengrep's processes were killed behind its launcher's back, unless it
+// asked for no results.
+func (c *cli) checkSARIF(code int, out []byte, toStdout bool, files []string, noResults bool) int {
 	noSARIF := false
 	if toStdout {
 		noSARIF = sarif.Check(out) != nil
@@ -86,7 +87,7 @@ func (c *cli) checkSARIF(code int, out []byte, toStdout bool, files []string) in
 		}
 		noSARIF = noSARIF || !valid
 	}
-	if code == 0 && noSARIF {
+	if code == 0 && noSARIF && !noResults {
 		fmt.Fprintln(c.stderr, "gogrep: opengrep exited 0 but wrote no SARIF")
 		return 2
 	}
