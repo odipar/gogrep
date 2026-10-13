@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -152,7 +153,7 @@ func runFixtures(fixtures []*ruletest.Fixture, a testArgs, sel selection, stdout
 			continue
 		}
 		if r.Bin == "" {
-			if r.Bin, err = opengrepBin(); err != nil {
+			if r.Bin, err = testBin(); err != nil {
 				return 0, err
 			}
 		}
@@ -173,6 +174,27 @@ func runFixtures(fixtures []*ruletest.Fixture, a testArgs, sel selection, stdout
 		ruletest.WarnUntested(stderr, env.Sets["project"], tests)
 	}
 	return code, nil
+}
+
+// testBin returns the opengrep binary that gogrep test runs, as an absolute
+// path: each opengrep process runs in its fixture's directory, where a
+// relative $OPENGREP_BIN would name another file. A binary that is missing
+// is an error, for exit code 2, rather than a failure of every test.
+func testBin() (string, error) {
+	bin, err := opengrepBin()
+	if err == nil {
+		bin, err = exec.LookPath(bin)
+	}
+	if err == nil {
+		bin, err = filepath.Abs(bin)
+	}
+	if err != nil {
+		return "", err
+	}
+	if fi, err := os.Stat(bin); err != nil || !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("opengrep binary %s is not a regular file", bin)
+	}
+	return bin, nil
 }
 
 // execFixture runs opengrep for one fixture, as ruletest.Exec describes.

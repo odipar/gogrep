@@ -236,6 +236,55 @@ func TestTestUsage(t *testing.T) {
 	})
 }
 
+// gogrep test runs each opengrep process in its fixture's directory, so it
+// resolves $OPENGREP_BIN first, and a missing binary is a setup error.
+func TestTestOpengrepBin(t *testing.T) {
+	useFakeOpengrep(t, 0)
+	testProject(t, brokenFiles)
+	exe := os.Getenv("OPENGREP_BIN")
+	fixture := testRoot + "/go/exec-command"
+
+	t.Run("relative", func(t *testing.T) {
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, err := filepath.Rel(wd, exe)
+		if err != nil {
+			t.Skipf("no relative path to %s: %v", exe, err)
+		}
+		t.Setenv("OPENGREP_BIN", rel)
+		// The fake opengrep loads no rule, so the test fails at RULE.
+		code, stdout, stderr := runGogrep("test", "--show-opengrep-output", fixture)
+		_, cmd, _ := strings.Cut(stdout, "  $ ")
+		bin, _, _ := strings.Cut(strings.TrimPrefix(cmd, "'"), " scan ")
+		if code != 1 || stderr != "" || !strings.Contains(stdout, "FAILED(RULE)") || !filepath.IsAbs(strings.TrimSuffix(bin, "'")) {
+			t.Errorf("gogrep test with OPENGREP_BIN=%s = %d, %q, stdout\n%s\nwant 1, no stderr, a RULE failure and an absolute opengrep", rel, code, stderr, stdout)
+		}
+	})
+
+	t.Run("missing", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "opengrep")
+		t.Setenv("OPENGREP_BIN", missing)
+		code, stdout, stderr := runGogrep("test", fixture)
+		if code != 2 || stdout != "" || !strings.HasPrefix(stderr, "gogrep: exec: ") {
+			t.Errorf("gogrep test with a missing OPENGREP_BIN = %d, %q, %q; want 2, no stdout, a gogrep: exec: error", code, stdout, stderr)
+		}
+		// Tests that fail before opengrep runs need no binary.
+		code, stdout, stderr = runGogrep("test", testRoot+"/broken/unknown")
+		if code != 1 || stderr != "" || !strings.Contains(stdout, "FAILED(RULE)") {
+			t.Errorf("gogrep test of an unresolved reference with a missing OPENGREP_BIN = %d, %q, stdout\n%s\nwant 1, no stderr, a RULE failure", code, stderr, stdout)
+		}
+	})
+
+	t.Run("directory", func(t *testing.T) {
+		t.Setenv("OPENGREP_BIN", ".")
+		if code, stdout, stderr := runGogrep("test", fixture); code != 2 || stdout != "" || !strings.HasPrefix(stderr, "gogrep: ") {
+			t.Errorf("gogrep test with OPENGREP_BIN=. = %d, %q, %q; want 2, no stdout, a gogrep: error", code, stdout, stderr)
+		}
+	})
+}
+
 func TestRulesSkipsFixtures(t *testing.T) {
 	testProject(t, nil)
 	code, stdout, stderr := runGogrep("rules", "--suite", "all")
