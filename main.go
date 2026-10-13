@@ -22,10 +22,16 @@ var rulesDir embed.FS
 //go:embed suites/*.yaml
 var suitesDir embed.FS
 
+// pins pins opengrep and the third-party rule sets.
+//
+//go:embed opengrep.json
+var pins []byte
+
 func main() {
 	os.Exit(gogrep.Main(os.Args[1:], gogrep.Assets{
 		Rules:  sub(rulesDir, "rules"),
 		Suites: sub(suitesDir, "suites"),
+		Pins:   pins,
 	}))
 }
 

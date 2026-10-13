@@ -4,7 +4,4 @@ package bundle
 
 // opengrep.json pins no opengrep for this platform, so a bundled build embeds
 // none and runs the opengrep on $PATH, as an unbundled one does.
-var (
-	binary []byte
-	sum    string
-)
+var binary []byte

@@ -1,12 +1,12 @@
 package rulesets
 
 import (
-	"encoding/json"
 	"maps"
 	"os"
 	"slices"
 	"testing"
 
+	"github.com/odipar/gogrep/internal/pin"
 	"github.com/odipar/gogrep/internal/rules"
 )
 
@@ -18,17 +18,15 @@ func TestStampsMatchPins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg struct {
-		Rules []struct{ Name, Commit, Path, Lang string }
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	pins, err := pin.Parse(data)
+	if err != nil {
 		t.Fatalf("opengrep.json: %v", err)
 	}
 	archives, stamps := Archives(), Stamps()
 	var pinned []string
-	for _, r := range cfg.Rules {
+	for _, r := range pins.Rules {
 		pinned = append(pinned, r.Name)
-		if want := r.Commit + " " + r.Path + " " + r.Lang; stamps[r.Name] != want {
+		if want := r.Stamp(); stamps[r.Name] != want {
 			t.Errorf("%s.commit = %q, want %q as opengrep.json pins it; run go run ./tools/fetch-opengrep", r.Name, stamps[r.Name], want)
 		}
 		if set, err := rules.FromTarGz(archives[r.Name]); err != nil || len(set) == 0 {

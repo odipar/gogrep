@@ -2,7 +2,4 @@
 
 package bundle
 
-var (
-	binary []byte
-	sum    string
-)
+var binary []byte

@@ -11,18 +11,22 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 
 	"github.com/odipar/gogrep/internal/bundle"
+	"github.com/odipar/gogrep/internal/opengrep"
+	"github.com/odipar/gogrep/internal/pin"
 )
 
 // Assets are the files gogrep embeds from the module root, which go:embed
 // cannot reach from this package.
 type Assets struct {
-	Rules  fs.FS // the repo's rules/ directory, the "gogrep" rule set
-	Suites fs.FS // the built-in suites, as <name>.yaml files
+	Rules  fs.FS  // the repo's rules/ directory, the "gogrep" rule set
+	Suites fs.FS  // the built-in suites, as <name>.yaml files
+	Pins   []byte // opengrep.json
 }
 
 // assets are the embedded files Main was given.
@@ -150,11 +154,37 @@ func opengrepBin() (string, error) {
 	if p := os.Getenv("OPENGREP_BIN"); p != "" {
 		return p, nil
 	}
-	if p, ok, err := bundle.Path(); ok {
+	if bin := bundle.Binary(); len(bin) > 0 {
+		p, err := extractOpengrep(bin)
 		if err != nil {
 			return "", fmt.Errorf("extracting embedded opengrep: %w", err)
 		}
 		return p, nil
 	}
 	return exec.LookPath("opengrep")
+}
+
+// extractOpengrep returns the path of bin, the embedded opengrep, in the user
+// cache directory, writing it there unless a verified copy is there already.
+// bin must be an opengrep that opengrep.json pins for this platform.
+func extractOpengrep(bin []byte) (string, error) {
+	pins, err := pin.Parse(assets.Pins)
+	if err != nil {
+		return "", fmt.Errorf("opengrep.json: %w", err)
+	}
+	var sums []string
+	for _, key := range pin.Keys(runtime.GOOS, runtime.GOARCH, false) {
+		if a, ok := pins.Assets[key]; ok {
+			sums = append(sums, a.SHA256)
+		}
+	}
+	if len(sums) == 0 {
+		return "", fmt.Errorf("opengrep.json pins no opengrep for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	path, _, err := opengrep.Extract(filepath.Join(cache, "gogrep"), bin, sums...)
+	return path, err
 }

@@ -28,6 +28,9 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	"github.com/odipar/gogrep/internal/opengrep"
+	"github.com/odipar/gogrep/internal/pin"
 )
 
 const (
@@ -36,35 +39,24 @@ const (
 	rulesDir = "internal/rulesets"
 )
 
-type config struct {
-	Version string           `json:"version"`
-	Assets  map[string]asset `json:"assets"` // keyed by GOOS/GOARCH[/variant]
-	Rules   []rulesPin       `json:"rules"`
-}
-
-type asset struct {
-	Name   string `json:"name"`
-	SHA256 string `json:"sha256"`
-}
-
 func main() {
 	configPath := flag.String("config", "opengrep.json", "pin config `file`")
-	pin := flag.String("pin", "", "re-pin the config to this opengrep release `tag` and exit")
+	tag := flag.String("pin", "", "re-pin the config to this opengrep release `tag` and exit")
 	flag.Parse()
 
-	if err := run(*configPath, *pin, flag.Args()); err != nil {
+	if err := run(*configPath, *tag, flag.Args()); err != nil {
 		fmt.Fprintf(os.Stderr, "fetch-opengrep: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(configPath, pin string, platforms []string) error {
+func run(configPath, tag string, platforms []string) error {
 	cfg, err := readConfig(configPath)
 	if err != nil {
 		return err
 	}
-	if pin != "" {
-		return repin(configPath, cfg, pin)
+	if tag != "" {
+		return repin(configPath, cfg, tag)
 	}
 
 	switch {
@@ -94,26 +86,25 @@ func run(configPath, pin string, platforms []string) error {
 	return nil
 }
 
-func readConfig(path string) (*config, error) {
+func readConfig(path string) (*pin.Pins, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var cfg config
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	cfg, err := pin.Parse(data)
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	return &cfg, nil
+	return cfg, nil
 }
 
-// fetch downloads asset a into outDir as opengrep_<os>_<arch>, next to a
-// .sha256 file holding its checksum. A file already present with the pinned
-// checksum is kept.
-func fetch(version, platform string, a asset) error {
+// fetch downloads asset a into outDir as opengrep_<os>_<arch>[_<variant>]. A
+// file already present with the pinned checksum is kept.
+func fetch(version, platform string, a pin.Asset) error {
 	base := filepath.Join(outDir, "opengrep_"+strings.ReplaceAll(platform, "/", "_"))
-	if sum, err := fileSHA256(base); err == nil && sum == a.SHA256 {
+	if sum, err := opengrep.FileSHA256(base); err == nil && sum == a.SHA256 {
 		fmt.Printf("%s: %s %s already present\n", platform, a.Name, version)
-		return os.WriteFile(base+".sha256", []byte(a.SHA256), 0o600)
+		return nil
 	}
 
 	url := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", repo, version, a.Name)
@@ -143,28 +134,12 @@ func fetch(version, platform string, a asset) error {
 	if sum := hex.EncodeToString(h.Sum(nil)); sum != a.SHA256 {
 		return fmt.Errorf("checksum mismatch for %s: got %s, pinned %s", a.Name, sum, a.SHA256)
 	}
-	if err := os.Rename(tmp.Name(), base); err != nil {
-		return err
-	}
-	return os.WriteFile(base+".sha256", []byte(a.SHA256), 0o600)
-}
-
-func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return os.Rename(tmp.Name(), base)
 }
 
 // repin points every asset in the config at release tag, taking checksums
 // from the digests GitHub publishes for release assets.
-func repin(path string, cfg *config, tag string) error {
+func repin(path string, cfg *pin.Pins, tag string) error {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/tags/%s", repo, tag)
 	resp, err := http.Get(url)
 	if err != nil {

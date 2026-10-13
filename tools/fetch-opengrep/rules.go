@@ -13,31 +13,20 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-)
 
-// rulesPin pins a GitHub rule repository to a git commit; git's content
-// addressing guarantees what we get.
-type rulesPin struct {
-	Name   string `json:"name"` // rule set name, used in --gogrep-ruleset
-	Repo   string `json:"repo"` // GitHub owner/name
-	Commit string `json:"commit"`
-	Path   string `json:"path,omitempty"` // repo subdirectory holding the rules
-	Lang   string `json:"lang,omitempty"` // language dir to file rules under, if the repo has none
-}
+	"github.com/odipar/gogrep/internal/pin"
+)
 
 // fetchRules clones the pinned rules commit and packs its rule files, plus
 // LICENSE, into the deterministic archive rulesDir/<name>.tar.gz, next to the
 // stamp <name>.commit.
-func fetchRules(pin rulesPin) error {
-	if pin.Name == "" || strings.ContainsAny(pin.Name, `/\.`) {
-		return fmt.Errorf("invalid rule set name %q", pin.Name)
-	}
-	out := filepath.Join(rulesDir, pin.Name+".tar.gz")
-	stamp := filepath.Join(rulesDir, pin.Name+".commit")
-	want := pin.Commit + " " + pin.Path + " " + pin.Lang
+func fetchRules(set pin.RuleSet) error {
+	out := filepath.Join(rulesDir, set.Name+".tar.gz")
+	stamp := filepath.Join(rulesDir, set.Name+".commit")
+	want := set.Stamp()
 	if got, err := os.ReadFile(stamp); err == nil && string(got) == want {
 		if _, err := os.Stat(out); err == nil {
-			fmt.Printf("rules: %s@%.12s already present\n", pin.Repo, pin.Commit)
+			fmt.Printf("rules: %s@%.12s already present\n", set.Repo, set.Commit)
 			return nil
 		}
 	}
@@ -48,7 +37,7 @@ func fetchRules(pin rulesPin) error {
 	}
 	defer os.RemoveAll(tmp)
 
-	fmt.Printf("rules: fetching %s@%s\n", pin.Repo, pin.Commit)
+	fmt.Printf("rules: fetching %s@%s\n", set.Repo, set.Commit)
 	git := func(args ...string) (string, error) {
 		cmd := exec.Command("git", append([]string{"-C", tmp}, args...)...)
 		cmd.Stderr = os.Stderr
@@ -57,23 +46,23 @@ func fetchRules(pin rulesPin) error {
 	}
 	for _, args := range [][]string{
 		{"init", "-q"},
-		{"fetch", "-q", "--depth", "1", "https://github.com/" + pin.Repo, pin.Commit},
+		{"fetch", "-q", "--depth", "1", "https://github.com/" + set.Repo, set.Commit},
 		{"checkout", "-q", "FETCH_HEAD"},
 	} {
 		if _, err := git(args...); err != nil {
 			return fmt.Errorf("rules: git %s: %w", args[0], err)
 		}
 	}
-	if head, err := git("rev-parse", "HEAD"); err != nil || head != pin.Commit {
-		return fmt.Errorf("rules: checked out %q, pinned %s (%v)", head, pin.Commit, err)
+	if head, err := git("rev-parse", "HEAD"); err != nil || head != set.Commit {
+		return fmt.Errorf("rules: checked out %q, pinned %s (%v)", head, set.Commit, err)
 	}
 
-	files, err := ruleFiles(tmp, pin.Path, pin.Lang)
+	files, err := ruleFiles(tmp, set.Path, set.Lang)
 	if err != nil {
 		return err
 	}
 	if len(files) == 0 {
-		return fmt.Errorf("no rule files found in %s/%s", pin.Repo, pin.Path)
+		return fmt.Errorf("no rule files found in %s/%s", set.Repo, set.Path)
 	}
 	n := len(files)
 	for _, l := range licenseFiles(tmp) {

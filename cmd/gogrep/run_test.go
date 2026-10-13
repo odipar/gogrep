@@ -2,10 +2,13 @@ package gogrep
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,9 +23,15 @@ func TestMain(m *testing.M) {
 		os.Exit(fakeOpengrep(os.Args[1:]))
 	}
 	// The files main.go embeds, read from the repository instead.
+	pins, err := os.ReadFile(filepath.Join(repoDir, "opengrep.json"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	assets = Assets{
 		Rules:  os.DirFS(filepath.Join(repoDir, "rules")),
 		Suites: os.DirFS(filepath.Join(repoDir, "suites")),
+		Pins:   pins,
 	}
 	os.Exit(m.Run())
 }
@@ -186,6 +195,45 @@ func TestRunRulesAndSuites(t *testing.T) {
 			code, stdout, stderr := runGogrep(tt.args...)
 			if code != tt.code || stderr != tt.stderr || !strings.Contains(stdout, tt.stdout) || (tt.stdout == "") != (stdout == "") {
 				t.Errorf("gogrep %q = %d, %q, %q; want %d, stdout with %q, stderr %q", tt.args, code, stdout, stderr, tt.code, tt.stdout, tt.stderr)
+			}
+		})
+	}
+}
+
+func TestExtractOpengrep(t *testing.T) {
+	isolateCache(t)
+	saved := assets.Pins
+	t.Cleanup(func() { assets.Pins = saved })
+	bin := []byte("an opengrep for " + runtime.GOOS + "/" + runtime.GOARCH)
+	sum := sha256.Sum256(bin)
+	pinsFor := func(sha string) []byte {
+		return []byte(`{"version": "v1.30.2", "assets": {"` + runtime.GOOS + "/" + runtime.GOARCH + `": {"name": "opengrep", "sha256": "` + sha + `"}}}`)
+	}
+
+	t.Run("pinned", func(t *testing.T) {
+		assets.Pins = pinsFor(hex.EncodeToString(sum[:]))
+		path, err := extractOpengrep(bin)
+		cache, _ := os.UserCacheDir()
+		want := filepath.Join(cache, "gogrep", "opengrep-"+hex.EncodeToString(sum[:8]), "opengrep")
+		if runtime.GOOS == "windows" {
+			want += ".exe"
+		}
+		if err != nil || path != want {
+			t.Errorf("extractOpengrep = %s, %v; want %s", path, err, want)
+		}
+	})
+
+	for _, tt := range []struct{ name, pins, err string }{
+		{"another pin", string(pinsFor(strings.Repeat("0", 64))), "embedded: SHA-256 " + hex.EncodeToString(sum[:]) + ", want the pinned " + strings.Repeat("0", 64)},
+		{"an invalid pin", string(pinsFor("0123")), "opengrep.json: asset " + runtime.GOOS + "/" + runtime.GOARCH + `: sha256 "0123" is not 64 lowercase hex digits`},
+		{"no pins", "", "opengrep.json: EOF"},
+		{"no pin for this platform", `{"version": "v1.30.2", "assets": {"plan9/amd64": {"name": "opengrep", "sha256": "` + strings.Repeat("0", 64) + `"}}}`,
+			"opengrep.json pins no opengrep for " + runtime.GOOS + "/" + runtime.GOARCH},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assets.Pins = []byte(tt.pins)
+			if path, err := extractOpengrep(bin); err == nil || err.Error() != tt.err {
+				t.Errorf("extractOpengrep = %s, %v; want %q", path, err, tt.err)
 			}
 		})
 	}
