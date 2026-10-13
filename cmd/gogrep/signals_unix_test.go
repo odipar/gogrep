@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -174,6 +175,77 @@ func TestScanLeavesSignals(t *testing.T) {
 	if got := probe(); got != "false" {
 		t.Errorf("a probe started after the scan reports SIGINT ignored: %s", got)
 	}
+}
+
+// Ctrl-Z stops a scan's opengrep, in its process group of its own, along
+// with gogrep, and continuing gogrep continues it.
+func TestScanJobControl(t *testing.T) {
+	useFakeOpengrep(t, 0)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// gogrep inherits an ignored SIGINT, as from an earlier test's
+	// pass-through, which catching it undoes.
+	caught := make(chan os.Signal, 1)
+	signal.Notify(caught, os.Interrupt)
+	defer signal.Stop(caught)
+	ready := filepath.Join(t.TempDir(), "ready")
+	cmd := exec.Command(exe, "scan", "--config", "r.yaml", "--sarif", ".")
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(os.Environ(), "GOGREP_TEST_MAIN=1", "GOGREP_TEST_FAKE_WAIT="+ready, "GOGREP_TEST_FAKE_CHILD=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Process.Kill()
+	var child int
+	for deadline := time.Now().Add(10 * time.Second); child == 0; time.Sleep(10 * time.Millisecond) {
+		data, _ := os.ReadFile(ready)
+		child, _ = strconv.Atoi(string(data))
+		if time.Now().After(deadline) {
+			t.Fatalf("the fake opengrep never started: %q", stderr.String())
+		}
+	}
+	defer syscall.Kill(child, syscall.SIGKILL)
+	gogrep := cmd.Process.Pid
+	// waitState waits until pid's state is stopped or not.
+	waitState := func(pid int, stopped bool) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); state(pid) == "T" != stopped; time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("process %d's state is %q; want stopped %v", pid, state(pid), stopped)
+			}
+		}
+	}
+	syscall.Kill(gogrep, syscall.SIGTSTP)
+	waitState(gogrep, true)
+	waitState(child, true)
+	syscall.Kill(gogrep, syscall.SIGCONT)
+	waitState(gogrep, false)
+	waitState(child, false)
+	syscall.Kill(gogrep, syscall.SIGINT)
+	if err := cmd.Wait(); cmd.ProcessState.ExitCode() != 130 || stderr.String() != "gogrep: interrupted\n" {
+		t.Errorf("gogrep scan, interrupted after Ctrl-Z and fg = %v, %q; want exit 130", err, stderr.String())
+	}
+}
+
+// state returns the first letter of the state of the process pid, as ps
+// prints it, such as "S", "R" or "T" (stopped); "" when there is none.
+func state(pid int) string {
+	if stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat"); err == nil {
+		// The state follows the command name, in parentheses.
+		if fields := strings.Fields(string(stat[strings.LastIndexByte(string(stat), ')')+1:])); len(fields) > 0 {
+			return fields[0][:1]
+		}
+		return ""
+	}
+	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	if s := strings.TrimSpace(string(out)); err == nil && s != "" {
+		return s[:1]
+	}
+	return ""
 }
 
 // running reports whether the process pid runs: it exists and has not

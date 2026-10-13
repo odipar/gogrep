@@ -69,3 +69,43 @@ func TestUnsearchableDirectory(t *testing.T) {
 		t.Errorf("Scan of an unsearchable directory = %v; want a permission error that names it", err)
 	}
 }
+
+// Signal reaches the running opengrep's whole process group, and fails when
+// none runs.
+func TestCmdSignal(t *testing.T) {
+	t.Parallel()
+	ready := filepath.Join(t.TempDir(), "ready")
+	e := newFakeEngine(t, "GOGREP_TEST_FAKE_WAIT="+ready, "GOGREP_TEST_FAKE_CHILD=1", "PATH="+os.Getenv("PATH"))
+	cmd, err := e.Command(context.Background(), t.TempDir(), nil, "scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Signal(os.Interrupt); err == nil {
+		t.Errorf("Signal before Run = nil, want an error")
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Run() }()
+	var pid []byte
+	for deadline := time.Now().Add(10 * time.Second); len(pid) == 0; time.Sleep(10 * time.Millisecond) {
+		pid, _ = os.ReadFile(ready)
+		if time.Now().After(deadline) {
+			t.Fatal("the fake opengrep never started")
+		}
+	}
+	if err := cmd.Signal(syscall.SIGTERM); err != nil {
+		t.Errorf("Signal while Run runs = %v", err)
+	}
+	var exitErr *ExitError
+	select {
+	case err := <-done:
+		if !errors.As(err, &exitErr) || exitErr.Code != -1 {
+			t.Errorf("Run, sent SIGTERM = %v, want an *ExitError for a signal", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run still runs after SIGTERM")
+	}
+	checkGone(t, string(pid))
+	if err := cmd.Signal(os.Interrupt); err == nil {
+		t.Errorf("Signal after Run = nil, want an error")
+	}
+}

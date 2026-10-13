@@ -3,6 +3,7 @@ package opengrep
 import (
 	"context"
 	"io"
+	"os"
 	"os/exec"
 	"time"
 )
@@ -43,6 +44,10 @@ type Cmd struct {
 	// which would scan on.
 	Foreground bool
 
+	// Started, if not nil, is called with the process once it has started,
+	// and with nil once Run is done with it, before Run returns.
+	Started func(*os.Process)
+
 	start func(*exec.Cmd) error // starts each attempt; nil means (*exec.Cmd).Start
 }
 
@@ -65,12 +70,7 @@ func (c *Cmd) Run(ctx context.Context) error {
 		cmd, reap := c.command(ctx)
 		err := start(cmd)
 		if err == nil {
-			err = cmd.Wait()
-			if ctx.Err() != nil {
-				reap()
-				return ctx.Err()
-			}
-			return err
+			return c.wait(ctx, cmd, reap)
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -87,6 +87,20 @@ func (c *Cmd) Run(ctx context.Context) error {
 		}
 		backoff *= 2
 	}
+}
+
+// wait waits for cmd, which runs c under ctx, as Run does.
+func (c *Cmd) wait(ctx context.Context, cmd *exec.Cmd, reap func()) error {
+	if c.Started != nil {
+		c.Started(cmd.Process)
+		defer c.Started(nil)
+	}
+	err := cmd.Wait()
+	if ctx.Err() != nil {
+		reap()
+		return ctx.Err()
+	}
+	return err
 }
 
 // command returns an exec.Cmd that runs c under ctx, and what to call once

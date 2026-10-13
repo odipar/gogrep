@@ -23,10 +23,16 @@ import (
 // TestMain lets the test binary stand in for opengrep: run as $OPENGREP_BIN
 // with GOGREP_TEST_FAKE_OPENGREP=1, it is fakeopengrep.Main. Run with
 // GOGREP_TEST_SIGPROBE=1, it prints whether it started with SIGINT ignored.
+// Run with GOGREP_TEST_MAIN=1, which its children do not inherit, it is
+// gogrep.
 func TestMain(m *testing.M) {
 	if os.Getenv("GOGREP_TEST_SIGPROBE") == "1" {
 		fmt.Println(signal.Ignored(os.Interrupt))
 		os.Exit(0)
+	}
+	if os.Getenv("GOGREP_TEST_MAIN") == "1" {
+		os.Unsetenv("GOGREP_TEST_MAIN")
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 	}
 	if os.Getenv("GOGREP_TEST_FAKE_OPENGREP") == "1" {
 		os.Exit(fakeopengrep.Main(os.Args[1:]))

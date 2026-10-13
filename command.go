@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"slices"
+	"sync"
 
 	"github.com/odipar/gogrep/internal/opengrep"
 )
@@ -44,7 +46,7 @@ type CommandOptions struct {
 
 // A Cmd is an opengrep command that Command prepared. Its fields may be
 // changed before Run, as with exec.Cmd. A Cmd cannot be reused, and is not
-// safe for concurrent use.
+// safe for concurrent use, except for Signal.
 type Cmd struct {
 	Path string   // the opengrep executable, absolute
 	Args []string // the command line, starting with Path, gogrep's own arguments included
@@ -60,6 +62,9 @@ type Cmd struct {
 	foreground bool
 	log        *slog.Logger
 	ran        bool
+
+	mu   sync.Mutex
+	proc *os.Process // the running opengrep, for Signal
 }
 
 // Command prepares opengrep to run with args (without the executable) in
@@ -119,7 +124,12 @@ func (c *Cmd) Run() error {
 	if len(c.Args) > 0 {
 		args = c.Args[1:]
 	}
-	oc := &opengrep.Cmd{Path: c.Path, Args: args, Dir: c.Dir, Env: c.Env, Stdin: c.Stdin, Stdout: c.Stdout, Stderr: c.Stderr, Foreground: c.foreground}
+	oc := &opengrep.Cmd{Path: c.Path, Args: args, Dir: c.Dir, Env: c.Env, Stdin: c.Stdin, Stdout: c.Stdout, Stderr: c.Stderr, Foreground: c.foreground,
+		Started: func(p *os.Process) {
+			c.mu.Lock()
+			c.proc = p
+			c.mu.Unlock()
+		}}
 	c.log.Info("running opengrep", "dir", c.Dir, "args", c.Args)
 	err := oc.Run(c.ctx)
 	var exitErr *exec.ExitError
@@ -133,6 +143,24 @@ func (c *Cmd) Run() error {
 		return startError(c.Dir, err)
 	}
 	return err
+}
+
+// Signal sends sig to the opengrep that Run started, while Run runs it: to
+// opengrep's whole process group, or with Foreground to opengrep alone. On
+// Windows, only os.Kill is supported, and it reaches opengrep alone. Signal
+// may be called from another goroutine while Run runs; it returns an error
+// when no opengrep runs. The gogrep command uses it to stop and continue a
+// scan with Ctrl-Z.
+func (c *Cmd) Signal(sig os.Signal) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch {
+	case c.proc == nil:
+		return errors.New("opengrep is not running")
+	case c.foreground:
+		return c.proc.Signal(sig)
+	}
+	return opengrep.SignalGroup(c.proc, sig)
 }
 
 // startError returns the error for an opengrep that could not start in dir

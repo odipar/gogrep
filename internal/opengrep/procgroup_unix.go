@@ -57,6 +57,19 @@ func killTree(cmd *exec.Cmd) (reap func()) {
 	}
 }
 
+// SignalGroup sends sig to the process group that p leads.
+func SignalGroup(p *os.Process, sig os.Signal) error {
+	s, ok := sig.(syscall.Signal)
+	if !ok {
+		return errors.New("unsupported signal")
+	}
+	err := syscall.Kill(-p.Pid, s)
+	if errors.Is(err, syscall.ESRCH) {
+		return os.ErrProcessDone
+	}
+	return err
+}
+
 // textBusy reports whether err is a start that failed because the
 // executable was open for writing.
 func textBusy(err error) bool { return errors.Is(err, syscall.ETXTBSY) }

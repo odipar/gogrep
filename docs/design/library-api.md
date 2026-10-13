@@ -206,7 +206,7 @@ How each subcommand maps onto the API:
 
 | CLI | Public API call | CLI-only work |
 |---|---|---|
-| `gogrep scan …` | `eng.Command(ctx, dir, &CommandOptions{Selection: sel or nil}, args...)`, then `Cmd.Run()` | `withRules` decision; `signal.NotifyContext`; stdin; rebranding SARIF to stdout and to `-o`/`--output`/`--sarif-output` files (chmod 0o600); the no-SARIF check; exit codes |
+| `gogrep scan …` | `eng.Command(ctx, dir, &CommandOptions{Selection: sel or nil}, args...)`, then `Cmd.Run()` | `withRules` decision; `signal.NotifyContext`; Ctrl-Z passed on with `Cmd.Signal`; stdin; rebranding SARIF to stdout and to `-o`/`--output`/`--sarif-output` files (chmod 0o600); the no-SARIF check; exit codes |
 | any other first argument that is not a gogrep subcommand (`gogrep --version`, `gogrep lsp`, …) | `eng.Command(ctx, dir, &CommandOptions{Foreground: true}, args...)` | interrupts caught while `Command` prepares opengrep's runtime (§2.5 item 9), then `signal.Ignore(SIGINT, SIGTERM)`, `os.Stdin`, SARIF rebranding, as today |
 | `gogrep opengrep …` | `eng.Command(ctx, dir, &CommandOptions{Foreground: true}, args...)` | interrupts caught during the preparation, then `signal.Ignore`, `os.Stdin`, streams passed straight through, exit code verbatim, no rebranding |
 | `gogrep rules` | `eng.Rules(dir, &RulesOptions{Selection: sel})` | tabwriter table; `N rules` (or `1 rule`) on stderr |
@@ -328,7 +328,10 @@ Every other behaviour, including all golden files and the injected argv apart fr
    - **Before:** opengrep shared gogrep's process group while gogrep ignored SIGINT and SIGTERM (`run.go:115`). An interrupted scan exited 0 with no SARIF and no message (reproduced twice).
    - **Now:** opengrep runs in a process group of its own, as it already does under `gogrep test`. SIGINT and SIGTERM (plus SIGHUP and SIGQUIT on Unix) make gogrep stop the tree, print `gogrep: interrupted` and exit 130. On Unix opengrep's group gets SIGINT, as Ctrl-C used to reach it, and SIGKILL a second later, so that opengrep still shows the cursor its progress bar hid and removes its temporary files (§3.4).
    - **Stdin:** opengrep's stdin is the null device when gogrep's stdin is a terminal, because a background process group that reads the terminal is stopped by SIGTTIN. Pipes and files are still passed on. The check is for a character device (`os.ModeCharDevice`), which the standard library tells without per-OS ioctls; the null device is one too and reads the same, so only an unusual stdin such as `/dev/zero` also becomes the null device.
-   - **Known limit:** under `stty tostop`, a background group that writes to the terminal is stopped as well. Ctrl-C still ends the scan.
+   - **Ctrl-Z:** the terminal's SIGTSTP reaches gogrep alone, so gogrep catches it during a scan: it stops opengrep's group with SIGSTOP (`Cmd.Signal`), then itself, and the SIGCONT of `fg` or `bg` continues both, as when they shared a group. Without this, the shell listed the job as stopped while opengrep went on scanning at full CPU and drew its progress bar over the prompt.
+   - **Known limits:**
+     - Under `stty tostop`, a background group that writes to the terminal is stopped as well. Ctrl-C still ends the scan.
+     - Signals that gogrep cannot catch do not reach opengrep. SIGSTOP stops gogrep alone. SIGKILL to gogrep or to its process group (`timeout -s KILL`, `kill -9 %1`, `kill -9 -<pgid>`) no longer ends opengrep: its processes finish the scan, and may still write an `-o`/`--sarif-output` file, which nobody then rebrands or makes 0o600. `timeout` and `timeout -k`, which send SIGTERM first, and Ctrl-C end it, as do container and cgroup kills. `gogrep test` has had the same limits, and its Ctrl-Z stops only gogrep (rule-test-fixtures.md §6.5). §3.4 has the library's side, and §8.2 the follow-up that would need a reaper process.
 5. **Exit 0 without SARIF is now an error.** A forwarded command that asked for SARIF and exited 0 without a valid SARIF 2.1.0 log (to stdout, or in an `-o`/`--sarif-output` file) exits 2 with `gogrep: opengrep exited 0 but wrote no SARIF`. Before, gogrep exited 0.
 6. **SARIF files are 0o600.** SARIF files gogrep rewrites (`-o`, `--output`, `--sarif-output`) end with mode 0o600. opengrep creates them 0o644, and `os.WriteFile` keeps an existing file's mode (`sarif.go:66`; observed).
 7. **`--disable-version-check` on injected scans.** Scans that gogrep supplies rules to also get `--disable-version-check`, so `$OPENGREP_ENABLE_VERSION_CHECK` can no longer turn on a network request. Scans with the user's own `--config` stay verbatim.
@@ -376,7 +379,7 @@ for _, f := range res.Findings {
 
 ### 3.2 Complete exported surface
 
-The listing below is the whole exported surface. It was type-checked with `go vet` against a stub, and the §6 example compiles against that stub. It uses `context`, `errors`, `io`, `log/slog`, `net/http` and `time`.
+The listing below is the whole exported surface. It was type-checked with `go vet` against a stub, and the §6 example compiles against that stub. It uses `context`, `errors`, `io`, `log/slog`, `net/http`, `os` and `time`.
 
 ```go
 // Package gogrep scans source trees with opengrep and gogrep's pinned rule
@@ -820,7 +823,7 @@ type CommandOptions struct {
 
 // A Cmd is an opengrep command that Command prepared. Its fields may be
 // changed before Run, as with exec.Cmd. A Cmd cannot be reused, and is not
-// safe for concurrent use.
+// safe for concurrent use, except for Signal.
 type Cmd struct {
 	Path string   // the opengrep executable, absolute
 	Args []string // the command line, starting with Path, gogrep's own arguments included
@@ -851,6 +854,14 @@ func (e *Engine) Command(ctx context.Context, dir string, opts *CommandOptions, 
 // reads nothing opengrep writes: interpreting its output, SARIF included, is
 // up to the caller.
 func (c *Cmd) Run() error
+
+// Signal sends sig to the opengrep that Run started, while Run runs it: to
+// opengrep's whole process group, or with Foreground to opengrep alone. On
+// Windows, only os.Kill is supported, and it reaches opengrep alone. Signal
+// may be called from another goroutine while Run runs; it returns an error
+// when no opengrep runs. The gogrep command uses it to stop and continue a
+// scan with Ctrl-Z.
+func (c *Cmd) Signal(sig os.Signal) error
 
 // ================================================================ rule tests
 
@@ -1085,7 +1096,7 @@ These go into the package documentation.
   - `Scan` and `Cmd.Run` return an error for which `errors.Is(err, context.Canceled)` (or `DeadlineExceeded`) holds, and no `Result`.
   - `Test` returns the tests reported so far plus that error, and writes no files for unfinished tests.
 - **Waits honour ctx too.** Lock waits poll every 100 ms, and downloads and runtime preparation stop with ctx. A cancelled unpack removes its private directory and publishes nothing.
-- **Signals belong to the caller.** The library never imports `os/signal`. Because opengrep runs in its own process group, a terminal's Ctrl-C reaches only the host program, which cancels the context. The CLI (`signal.NotifyContext`) and §6 show the pattern.
+- **Signals belong to the caller.** The library never imports `os/signal`. Because opengrep runs in its own process group, a terminal's Ctrl-C reaches only the host program, which cancels the context. The CLI (`signal.NotifyContext`) and §6 show the pattern. Ctrl-Z (SIGTSTP) reaches only the host too: a host that runs opengrep through `Command` passes it on with `Cmd.Signal(syscall.SIGSTOP)` before stopping itself, and SIGCONT after, as the CLI does; `Scan` and `Test` expose no process, so their scans go on while the host is stopped.
 - **A timeout is a ctx deadline.** No internal queue exists, so a deadline bounds exactly the opengrep run plus preparation.
 - **Limit.** If the host dies without cancelling (SIGKILL, or an uncaught signal), running opengrep groups finish their scan, as they do under `gogrep test` today. This is documented.
 
@@ -1922,7 +1933,7 @@ After each `v*` tag, a release smoke job runs `go get github.com/odipar/gogrep@$
 - **Reading project files through `os.Root` with size limits.** Rejected for v0.4: it would change the CLI for projects that symlink shared rules from outside the repository. `NoProjectRules` is the trust switch.
 - **An option to ignore a repository's `.semgrepignore`.** A follow-up, once opengrep has a supported switch.
 
-**Follow-up:** Windows Job Objects with `KILL_ON_JOB_CLOSE` (standard library, through `syscall.NewLazyDLL`), so that opengrep dies with a SIGKILLed host.
+**Follow-up:** Windows Job Objects with `KILL_ON_JOB_CLOSE` (standard library, through `syscall.NewLazyDLL`), so that opengrep dies with a SIGKILLed host. On Unix that needs a reaper: a small process in opengrep's group that holds a pipe from gogrep and kills the group when the pipe closes. `Pdeathsig` on the launcher is not enough, as the launcher passes no kill on to `opengrep-cli` and `opengrep-core`.
 
 ### 8.3 Open questions (each with its recommended default)
 

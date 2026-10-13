@@ -3,6 +3,7 @@
 package opengrep
 
 import (
+	"os"
 	"os/exec"
 	"strconv"
 )
@@ -18,6 +19,10 @@ func killTree(cmd *exec.Cmd) (reap func()) {
 	}
 	return func() {}
 }
+
+// SignalGroup sends sig to p alone: Windows has no process groups that
+// gogrep uses.
+func SignalGroup(p *os.Process, sig os.Signal) error { return p.Signal(sig) }
 
 // textBusy reports whether err is a start that failed because the
 // executable was open for writing, which Windows does not report so.
