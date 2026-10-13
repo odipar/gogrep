@@ -95,7 +95,8 @@ type TestReport struct {
 // Test and AcceptTests, on one directory at once, unless every Test is
 // ReadOnly. A failing test is a result, not an error.
 //
-// Test returns an error wrapping ErrNoTestRoot when dir has no
+// Test returns a plain error that names dir when dir is relative, missing
+// or not a directory; an error wrapping ErrNoTestRoot when dir has no
 // ProjectTestsDir; an error for a path that does not exist, lies outside it
 // or selects no test; a *SelectionError or ErrNoRules; an error when no test
 // matches the selection; and an error wrapping ErrNoOpengrep when a test
@@ -247,7 +248,10 @@ type Acceptance struct {
 // (every fixture when paths is empty) to expected.txt, mode 0o600. paths are
 // as in TestOptions. Fixtures without actual.txt, and fixtures that fail at
 // SETUP, are skipped. It returns one Acceptance per fixture it tried, in
-// order; its error is set only when the fixtures cannot be discovered.
+// order. Its error is set only when the fixtures cannot be discovered: a
+// plain error that names dir when dir is relative, missing or not a
+// directory, an error wrapping ErrNoTestRoot when dir has no
+// ProjectTestsDir, or an error for paths, as from Test.
 func (e *Engine) AcceptTests(dir string, paths []string) ([]Acceptance, error) {
 	fixtures, err := discover(dir, paths)
 	if err != nil {

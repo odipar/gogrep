@@ -657,7 +657,8 @@ type RulesOptions struct {
 // Rules returns the rules opts selects, sorted by ID: the rules that a Scan
 // of dir with the same options runs. dir is the absolute project directory
 // whose opengrep/gogrep rules and suites take part, or "" for none (a
-// relative suite file is then an error). Rules runs no opengrep.
+// relative suite file is then an error); a dir that is relative, missing or
+// not a directory is an error that names it. Rules runs no opengrep.
 func (e *Engine) Rules(dir string, opts *RulesOptions) ([]Rule, error)
 
 // A Suite is one suite that Selection.Suites can name.
@@ -676,8 +677,9 @@ type SuitesOptions struct {
 }
 
 // Suites returns the built-in suites and those of the project in dir ("" for
-// none), sorted by name. A suite file that cannot be read or parsed is an
-// error; one that parses but cannot select rules has Err set.
+// none), sorted by name. A dir that is relative, missing or not a
+// directory is an error that names it, and so is a suite file that cannot
+// be read or parsed; one that parses but cannot select rules has Err set.
 func (e *Engine) Suites(dir string, opts *SuitesOptions) ([]Suite, error)
 
 // ================================================================== scanning
@@ -962,7 +964,8 @@ type TestReport struct {
 // Test and AcceptTests, on one directory at once, unless every Test is
 // ReadOnly. A failing test is a result, not an error.
 //
-// Test returns an error wrapping ErrNoTestRoot when dir has no
+// Test returns a plain error that names dir when dir is relative, missing
+// or not a directory; an error wrapping ErrNoTestRoot when dir has no
 // ProjectTestsDir; an error for a path that does not exist, lies outside it
 // or selects no test; a *SelectionError or ErrNoRules; an error when no test
 // matches the selection; and an error wrapping ErrNoOpengrep when a test
@@ -983,7 +986,10 @@ type Acceptance struct {
 // (every fixture when paths is empty) to expected.txt, mode 0o600. paths are
 // as in TestOptions. Fixtures without actual.txt, and fixtures that fail at
 // SETUP, are skipped. It returns one Acceptance per fixture it tried, in
-// order; its error is set only when the fixtures cannot be discovered.
+// order. Its error is set only when the fixtures cannot be discovered: a
+// plain error that names dir when dir is relative, missing or not a
+// directory, an error wrapping ErrNoTestRoot when dir has no
+// ProjectTestsDir, or an error for paths, as from Test.
 func (e *Engine) AcceptTests(dir string, paths []string) ([]Acceptance, error)
 
 // ==================================================================== errors

@@ -26,7 +26,8 @@ type RulesOptions struct {
 // Rules returns the rules opts selects, sorted by ID: the rules that a Scan
 // of dir with the same options runs. dir is the absolute project directory
 // whose opengrep/gogrep rules and suites take part, or "" for none (a
-// relative suite file is then an error). Rules runs no opengrep.
+// relative suite file is then an error); a dir that is relative, missing or
+// not a directory is an error that names it. Rules runs no opengrep.
 func (e *Engine) Rules(dir string, opts *RulesOptions) ([]Rule, error) {
 	if opts == nil {
 		opts = &RulesOptions{}
@@ -69,8 +70,9 @@ type SuitesOptions struct {
 }
 
 // Suites returns the built-in suites and those of the project in dir ("" for
-// none), sorted by name. A suite file that cannot be read or parsed is an
-// error; one that parses but cannot select rules has Err set.
+// none), sorted by name. A dir that is relative, missing or not a
+// directory is an error that names it, and so is a suite file that cannot
+// be read or parsed; one that parses but cannot select rules has Err set.
 func (e *Engine) Suites(dir string, opts *SuitesOptions) ([]Suite, error) {
 	if opts == nil {
 		opts = &SuitesOptions{}
