@@ -2,6 +2,7 @@ package gogrep
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -55,8 +56,9 @@ type ScanOptions struct {
 	MaxTargetBytes int64
 
 	// Stderr, if not nil, receives a live copy of opengrep's stderr, written
-	// from another goroutine. Result.Stderr and the errors keep its last 64
-	// KiB either way.
+	// from another goroutine. Once a write to it fails, it gets no more, and
+	// the scan goes on as if it were nil. Result.Stderr and the errors keep
+	// the last 64 KiB of opengrep's stderr either way.
 	Stderr io.Writer
 }
 
@@ -173,7 +175,13 @@ func (e *Engine) Scan(ctx context.Context, dir string, opts *ScanOptions) (*Resu
 	tail := &tailWriter{max: stderrTail}
 	var stderr io.Writer = tail
 	if opts.Stderr != nil {
-		stderr = io.MultiWriter(tail, opts.Stderr)
+		live := &liveCopy{w: opts.Stderr}
+		stderr = io.MultiWriter(tail, live)
+		defer func() {
+			if live.err != nil {
+				e.log.Info("ScanOptions.Stderr failed, and got no more of opengrep's stderr", "err", live.err)
+			}
+		}()
 	}
 	err = e.runHermetic(ctx, info.Path, xdg, dir, args, &stdout, stderr)
 	var exitErr *exec.ExitError
@@ -288,6 +296,23 @@ func result(out []byte, n int, stderr []byte) (*Result, error) {
 		res.Diagnostics = append(res.Diagnostics, Diagnostic(d))
 	}
 	return res, nil
+}
+
+// A liveCopy passes what is written to it on to w until a write to w fails,
+// and never fails itself: os/exec would stop copying opengrep's stderr, and
+// opengrep would fail on the broken pipe or Wait return w's error.
+type liveCopy struct {
+	w   io.Writer
+	err error // why w gets no more
+}
+
+func (l *liveCopy) Write(p []byte) (int, error) {
+	if l.err == nil {
+		if n, err := l.w.Write(p); err != nil || n != len(p) {
+			l.err = cmp.Or(err, io.ErrShortWrite)
+		}
+	}
+	return len(p), nil
 }
 
 // A tailWriter keeps the last max bytes written to it, in buf.

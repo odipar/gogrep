@@ -687,8 +687,9 @@ type ScanOptions struct {
 	MaxTargetBytes int64
 
 	// Stderr, if not nil, receives a live copy of opengrep's stderr, written
-	// from another goroutine. Result.Stderr and the errors keep its last 64
-	// KiB either way.
+	// from another goroutine. Once a write to it fails, it gets no more, and
+	// the scan goes on as if it were nil. Result.Stderr and the errors keep
+	// the last 64 KiB of opengrep's stderr either way.
 	Stderr io.Writer
 }
 

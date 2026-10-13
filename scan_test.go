@@ -184,6 +184,30 @@ func TestScanStderr(t *testing.T) {
 	if live.String() != want || string(res.Stderr) != want[len(want)-64<<10:] {
 		t.Errorf("ScanOptions.Stderr got %d bytes and Result.Stderr %d, ending %q; want %d and 65536", live.Len(), len(res.Stderr), res.Stderr[max(len(res.Stderr)-20, 0):], len(want))
 	}
+
+	// A copy that fails changes nothing else.
+	for _, n := range []int{0, 1} {
+		w := &failingWriter{after: n}
+		res, err := e.Scan(context.Background(), t.TempDir(), &ScanOptions{Stderr: w})
+		if err != nil {
+			t.Errorf("Scan with a Stderr that fails after %d writes = %v", n, err)
+		} else if string(res.Stderr) != want[len(want)-64<<10:] || w.writes != n+1 {
+			t.Errorf("Scan with a Stderr that fails after %d writes kept %d bytes of stderr and wrote %d times; want 65536, and no write after the failure", n, len(res.Stderr), w.writes)
+		}
+	}
+}
+
+// A failingWriter fails every write after the first after.
+type failingWriter struct {
+	after, writes int
+}
+
+func (w *failingWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes > w.after {
+		return 0, errors.New("log closed")
+	}
+	return len(p), nil
 }
 
 // Findings are decoded from the log, which is rebranded.
