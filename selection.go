@@ -143,6 +143,11 @@ func (s Selection) union(env *suite.Env) ([]*rules.Rule, error) {
 		}
 		rs, err := st.Select(env)
 		if err != nil {
+			// An unknown rule set or an import cycle; an import that
+			// cannot load is a *SelectionError already.
+			if !errors.As(err, new(*SelectionError)) {
+				err = &SelectionError{Kind: "suite", Value: name, Err: err}
+			}
 			return nil, err
 		}
 		picked = append(picked, rs...)

@@ -34,11 +34,12 @@ var (
 )
 
 // A SelectionError reports a Selection entry that is malformed, names an
-// unknown suite, cannot be read, or matches no rule.
+// unknown suite, cannot be read, names a suite that cannot select rules, or
+// matches no rule.
 type SelectionError struct {
 	Kind  string // "suite", "rule" or "filter"
 	Value string // the suite name or file, the rule entry, or the filter's Field, as given
-	Err   error  // ErrUnknownSuite, ErrNoRules, a regexp error, or a suite file's read or parse error
+	Err   error  // ErrUnknownSuite, ErrNoRules, a regexp error, a suite file's read or parse error, or a suite's unknown rule set or import cycle
 }
 
 func (e *SelectionError) Error() string {

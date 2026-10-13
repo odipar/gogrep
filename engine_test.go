@@ -189,6 +189,8 @@ func TestSelectionErrors(t *testing.T) {
 		"opengrep/gogrep/rules/go/no-exec-command.yaml": noExecRule,
 		"suites/imports.yaml":                           "- import: web\n",
 		"suites/bad.yaml":                               "- frobnicate: x\n",
+		"suites/unknownset.yaml":                        "- rules: no-such-set\n",
+		"suites/cycle.yaml":                             "- import: suites/cycle.yaml\n",
 	})
 	e := newEngine(t, Config{})
 	// The operating system's words for a missing file.
@@ -209,6 +211,8 @@ func TestSelectionErrors(t *testing.T) {
 		{Selection{Suites: []string{"suites/missing.yaml"}}, "suite", "suites/missing.yaml", fs.ErrNotExist, "open suites/missing.yaml: " + notExist.Err.Error()},
 		{Selection{Suites: []string{"suites/bad.yaml"}}, "suite", "suites/bad.yaml", nil,
 			"suite suites/bad.yaml: instruction 1 (frobnicate): unknown instruction; want description, rules, import, include or exclude"},
+		{Selection{Suites: []string{"suites/unknownset.yaml"}}, "suite", "suites/unknownset.yaml", nil, `suite suites/unknownset.yaml: unknown rule set "no-such-set"`},
+		{Selection{Suites: []string{"suites/cycle.yaml"}}, "suite", "suites/cycle.yaml", nil, "suite import cycle: suites/cycle.yaml -> suites/cycle.yaml"},
 		{Selection{Rules: []string{"use-of-md6"}}, "rule", "use-of-md6", ErrNoRules, "rule use-of-md6 matches no rule"},
 		{Selection{Rules: []string{"/(/"}}, "rule", "/(/", nil, "rule /(/: error parsing regexp: missing closing ): `(`"},
 		{Selection{Filters: []Filter{{Field: "languages", Values: []string{"/(/"}}}}, "filter", "languages", nil, "filter languages: error parsing regexp: missing closing ): `(`"},
