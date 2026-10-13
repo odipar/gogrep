@@ -45,7 +45,8 @@ func (e *Engine) Opengrep(ctx context.Context) (*OpengrepInfo, error) {
 
 // opengrep returns the executable that Opengrep returns, and the
 // XDG_CACHE_HOME of its prepared runtime: "" for none, which leaves opengrep
-// where it keeps its runtime by itself.
+// where it keeps its runtime by itself. It marks both as used (see
+// PruneCache).
 func (e *Engine) opengrep(ctx context.Context) (*OpengrepInfo, string, error) {
 	info, err := e.find(ctx)
 	if err != nil || e.cacheErr != nil {
@@ -55,6 +56,7 @@ func (e *Engine) opengrep(ctx context.Context) (*OpengrepInfo, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	e.markUsed(info)
 	return info, xdg, nil
 }
 

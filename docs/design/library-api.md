@@ -553,11 +553,12 @@ type PruneOptions struct {
 
 // PruneCache removes from CacheDir what no run has used for MaxAge: rule
 // selections, and the executables and runtimes of opengrep builds other
-// than this version's pins. It also removes temporaries left by crashed
-// runs once they are a day old. The current pins' executables and runtimes
-// are kept. A run marks what it uses before starting opengrep, at most once
-// a day per process. PruneCache never runs by itself, and it touches
-// nothing outside CacheDir, opengrep's default runtime directory included.
+// than this version's pins. It also removes temporaries and per-run logs
+// left by crashed runs once they are a day old. The current pins'
+// executables and runtimes are kept. A run marks what it uses before
+// starting opengrep, at most once a day per process. PruneCache never runs
+// by itself, and it touches nothing outside CacheDir, opengrep's default
+// runtime directory included.
 func (e *Engine) PruneCache(opts *PruneOptions) error
 
 // ================================================================= selection
@@ -1340,7 +1341,7 @@ Locks are polled every 100 ms, so ctx can cancel the wait. The OS releases them 
 | `runtime-<sha16>/opengrep/<version>/` (Linux, macOS) | directory 0o700; opengrep's own modes inside | runtime preparation | same rule |
 | `runtime-<sha16>.ready` (Windows) | 0o600 | runtime preparation | same rule |
 | `selections/<sha16>.yaml` | 0o600 | `rules.Write`, content-addressed (unchanged, so printed `--show-opengrep-output` lines can still be rerun); modification time refreshed on reuse | `PruneCache`, after `MaxAge` unused |
-| `logs/opengrep-*.log` | 0o600, created before opengrep opens it | `Scan`, `Test`, runtime preparation (`SEMGREP_LOG_FILE`) | when that opengrep process ends |
+| `logs/opengrep-*.log` | 0o600, created before opengrep opens it | `Scan`, `Test`, runtime preparation (`SEMGREP_LOG_FILE`) | when that opengrep process ends; `PruneCache` after a day |
 | `locks/{install,runtime}-<sha16>.lock` | 0o600 | §4.7 | kept (empty) |
 | `.runtime-*/`, `opengrep-<sha16>/.download-*`, `opengrep-<sha16>/.opengrep-*`, `selections/.tmp-*` | 0o700 / 0o600 | in-flight temporaries | on every path; `PruneCache` after a day |
 
@@ -1941,7 +1942,7 @@ After each `v*` tag, a release smoke job runs `go get github.com/odipar/gogrep@$
 | 14 | `Engine.Scan` with typed findings; `ExitError`, `OutputError` | `internal/engine/scan.go` and tests; `testdata/golden/scan-findings.json`; `Command` and `Scan` share `ruleArgs` (rule injection) and `Scan` and the staged `TestExec` share `runHermetic` (environment, log file, process group); `internal/fakeopengrep` replays a SARIF file (`GOGREP_TEST_FAKE_SARIF`) and writes N bytes of stderr (`GOGREP_TEST_FAKE_STDERR`) | §7.1 Scan tests with the fake. §7.2 integration golden (the findings without their fingerprints, which may depend on the platform; the test checks that each has one of its own). 8 concurrent scans of 8 copies. `TestNoProcessState` compares signal dispositions and a probe child with those before the calls, so it also passes in a process started with SIGINT ignored. |
 | 15 | `Engine.Test` and `Engine.AcceptTests`; `gogrep test` uses them | `internal/engine/test.go` and tests; `internal/engine/staging.go` removed; `cmd/gogrep/testcmd.go` and `testreport.go` (which formats `TestResult`s). `TestResult.RuleID` is also set when opengrep rejects the resolved rule (stage RULE), as that rule is known; it is "" only at SETUP or when rule.ref names no rule. The CLI maps `--suite=`/`--rule=` without a value to a `Filter` without values, which keeps no rule, so `Test` reports discovery errors before the empty selection, as before | All test goldens byte-identical. `ReadOnly`, `Progress` order, cancellation. `TestTestOpengrepBin`'s "unresolved references need no binary" still holds. |
 | 16 | `Engine.InstallOpengrep` and `gogrep install-opengrep` | `internal/engine/install.go`; `internal/opengrep/download.go` and tests (§7.1 `httptest` cases, the 6-process cold install); `cmd/gogrep/install.go`; `tools/fetch-opengrep` uses `opengrep.Download`; README. `opengrep.Download` is a struct (`URL`, `From`, `Client`, `SHA256`) whose `Fetch(ctx, path)` does §4.4 steps 4 and 5; `opengrep.Install(ctx, dir, d, log)` adds steps 2 and 3 for the cache. `InstallOptions.From` must be absolute (the CLI makes `--from` absolute), and `BaseURL` must be an http or https URL, so that a typo is not retried for 7 s. `gogrep install-opengrep` is dispatched before gogrep's own flags are parsed, as `gogrep opengrep` is, and takes only `--from`, `--base-url` and `-h` | Unit tests. The CLI test with a wrong `--from` file gives 1. In CI's unbundled leg, `gogrep install-opengrep --from <fetched asset>` and then the integration tests run against the installed copy. |
-| 17 | `Engine.PruneCache` | `internal/engine/prune.go` and tests | Removal by age and pin; current entries kept; temporaries older than a day removed |
+| 17 | `Engine.PruneCache` | `internal/engine/prune.go` and tests. "Used" is the modification time: of `opengrep-<sha16>/`, `runtime-<sha16>/` and `runtime-<sha16>.ready`, which every run that finds opengrep sets (at most once a day per path and process), and of `selections/<sha16>.yaml`, which `rules.Write` refreshes. Logs left by crashed runs count as temporaries. Removing a temporary inside `opengrep-<sha16>/` keeps that directory's time, so it does not count as a use. A negative `MaxAge` is an error; entries of other names are left alone | Removal by age and pin; current entries kept; temporaries older than a day removed |
 | 18 | The module root becomes the gogrep library; the command becomes `package main` | `git mv internal/engine/*.go .` (`package gogrep`; `New(cfg)` uses the root embeds); new `embed.go`; `main.go` and `Assets` deleted; `cmd/gogrep` becomes `package main` with `main.go`; new `cmd/gogrep/imports_test.go` (`TestCLIUsesPublicAPI`); `go.mod` (`go 1.26.0`, `toolchain go1.26.2`); workflows build `./cmd/gogrep`; README install path | Every CLI test and golden passes. `TestCLIUsesPublicAPI` passes. `go doc github.com/odipar/gogrep` shows exactly §3.2. `go list -deps .` contains no `internal/bundle`. `go build -tags gogrep_bundled -o gogrep ./cmd/gogrep && (cd testdata/project && ../../gogrep test)` prints `All … tests passed.` |
 | 19 | Package documentation, examples, README library section | `doc.go`, `example_test.go`, `README.md`, `suites/README.md`, `rules/README.md`, `NOTICE.md`, layout note in `docs/design/rule-test-fixtures.md` | `go test -run Example .`, with `ExampleEngine_Rules`'s output holding. `go doc -all` reviewed. README links resolve. |
 | 20 | CI: race, consumer module, Alpine musl, rule-set checks, gorelease | `.github/workflows/test.yml` (race, consumer and musl jobs), new `.github/workflows/rulesets.yml`; new `testdata/modzip/**` and `testdata/consumer/**`; `tools/fetch-opengrep -check-rules` | Every job is green on the PR, including `go mod vendor && go build -mod=vendor` and `-tags bundled,musl` in the consumer, and musl auto-detection in `golang:1.26-alpine` |
