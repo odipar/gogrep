@@ -112,7 +112,7 @@ func runTest(args []string, sel selection, stdout, stderr io.Writer) int {
 	fixtures, err := discover(a.paths)
 	if err == nil {
 		if a.accept {
-			return ruletest.Accept(fixtures, stdout, stderr)
+			return accept(fixtures, stdout, stderr)
 		}
 		var code int
 		if code, err = runFixtures(fixtures, a, sel, stdout, stderr); err == nil {
@@ -158,7 +158,7 @@ func runFixtures(fixtures []*ruletest.Fixture, a testArgs, sel selection, stdout
 		return 0, errors.New("no tests match the selection")
 	}
 
-	r := &ruletest.Runner{Exec: execFixture, Threads: a.threads, Learn: a.learn, KeepSARIF: a.keepSARIF, ShowOutput: a.showOutput}
+	r := &ruletest.Runner{Exec: execFixture, Threads: a.threads, Learn: a.learn, KeepSARIF: a.keepSARIF}
 	configs := map[*rules.Rule]string{}
 	for _, t := range tests {
 		if t.Rule == nil {
@@ -181,11 +181,32 @@ func runFixtures(fixtures []*ruletest.Fixture, a testArgs, sel selection, stdout
 	// finished are reported.
 	ctx, stop := interruptContext()
 	defer stop()
-	code := r.Run(ctx, tests, stdout, stderr)
-	if code != 130 && len(a.paths) == 0 && !active {
-		ruletest.WarnUntested(stderr, env.Sets["project"], tests)
+	report := &testReport{stdout: stdout, stderr: stderr, total: len(tests), showOutput: a.showOutput}
+	report.start()
+	if _, err := r.Run(ctx, tests, report.add); err != nil {
+		return report.interrupted(), nil
+	}
+	code := report.finish()
+	if len(a.paths) == 0 && !active {
+		warnUntested(stderr, ruletest.Untested(env.Sets["project"], tests))
 	}
 	return code, nil
+}
+
+// accept implements gogrep test accept: it makes the actual.txt of each
+// fixture its expected.txt, prints "Accepted <fixture>" for each, and
+// returns the exit code, 2 when a file could not be renamed.
+func accept(fixtures []*ruletest.Fixture, stdout, stderr io.Writer) int {
+	code := 0
+	for _, a := range ruletest.Accept(fixtures) {
+		if a.Err != nil {
+			fmt.Fprintf(stderr, "gogrep: accepting %s/actual.txt: %v\n", a.Name, a.Err)
+			code = 2
+			continue
+		}
+		fmt.Fprintf(stdout, "Accepted %s\n", a.Name)
+	}
+	return code
 }
 
 // testBin returns the opengrep binary that gogrep test runs, as an absolute

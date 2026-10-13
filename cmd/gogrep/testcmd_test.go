@@ -365,6 +365,27 @@ func TestTestMissingExpected(t *testing.T) {
 	checkNoFile(t, actual)
 }
 
+// gogrep test accept reports the fixtures whose actual.txt it accepted on
+// stdout, and those whose it could not on stderr, with exit code 2.
+func TestTestAccept(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory that its owner cannot write to")
+	}
+	accepted, locked := testRoot+"/go/exec-command", testRoot+"/go/exec-command-in-prod"
+	testProject(t, map[string]string{accepted + "/actual.txt": "new\n", locked + "/actual.txt": "new\n"})
+	if err := os.Chmod(filepath.FromSlash(locked), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(filepath.FromSlash(locked), 0o700) })
+	code, stdout, stderr := runGogrep("test", "accept")
+	if want := "Accepted " + accepted + "\n"; code != 2 || stdout != want ||
+		!strings.HasPrefix(stderr, "gogrep: accepting "+locked+"/actual.txt: ") || strings.Count(stderr, "\n") != 1 {
+		t.Errorf("gogrep test accept = %d, %q, %q; want 2, %q, an error accepting %s/actual.txt", code, stdout, stderr, want, locked)
+	}
+	checkFile(t, accepted+"/expected.txt", "new\n")
+	checkNoFile(t, accepted+"/actual.txt")
+}
+
 func TestTestRegression(t *testing.T) {
 	requireOpengrep(t)
 	testProject(t, nil)

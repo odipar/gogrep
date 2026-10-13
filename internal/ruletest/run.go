@@ -2,8 +2,6 @@ package ruletest
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -43,25 +41,36 @@ func Plan(fixtures []*Fixture, all []*rules.Rule, keep func(*rules.Rule) bool) [
 	return tests
 }
 
-// A Runner runs tests, each in its own opengrep process, and reports them.
+// A Runner runs tests, each in its own opengrep process.
 type Runner struct {
-	Bin        string // the opengrep binary
-	Exec       Exec
-	Threads    int  // opengrep processes at once: 0 means one per CPU, -N one per CPU less N, and at least 1
-	Learn      bool // make the results of tests that fail at RESULT their expected.txt
-	KeepSARIF  bool // keep each fixture's opengrep output as actual.sarif
-	ShowOutput bool // print each fixture's opengrep command line and stderr
+	Bin       string // the opengrep binary
+	Exec      Exec
+	Threads   int  // opengrep processes at once: 0 means one per CPU, -N one per CPU less N, and at least 1
+	Learn     bool // make the results of tests that fail at RESULT their expected.txt
+	KeepSARIF bool // keep each fixture's opengrep output as actual.sarif
+	ReadOnly  bool // write and remove no file in the fixtures, whatever Learn and KeepSARIF say
 }
 
-// Run runs tests and reports them on stdout in order, each as soon as it and
-// every test before it are done, followed by a summary. It returns gogrep's
-// exit code: 0 when every test passed, 1 when a test failed, 2 when a file in
-// a fixture could not be written or removed, and 130 when ctx was done before
-// every test was reported. ctx is done when gogrep is interrupted: Run then
-// starts no more opengrep processes, Exec kills the running ones, and the
-// tests that had not finished are neither reported nor touch their files.
-func (r *Runner) Run(ctx context.Context, tests []*Test, stdout, stderr io.Writer) int {
-	fmt.Fprintf(stdout, "Executing %d tests.\n", len(tests))
+// A Verdict is how a test went.
+type Verdict struct {
+	*Test
+	Stage      Stage    // where the test failed; "" when it passed or was learned
+	Learned    bool     // the results, which differed from expected.txt, became expected.txt
+	Missing    bool     // the fixture has no expected.txt
+	Diff       string   // the diff from expected.txt to the results; "" when they are equal
+	Details    []string // why the test failed, if not for its results
+	Command    []string // the opengrep command line, run in the fixture; nil when the test failed before opengrep was to run
+	Stderr     []byte   // opengrep's stderr
+	FileErrors []error  // why files in the fixture could not be written or removed
+}
+
+// Run runs tests and returns their verdicts, in order. It calls report, if
+// not nil, with each verdict as soon as the test and every test before it
+// are done. When ctx is done, Run starts no more opengrep processes, Exec
+// kills the running ones, and the tests that had not finished are neither
+// reported nor touch their files: Run returns the verdicts reported so far
+// and ctx's error.
+func (r *Runner) Run(ctx context.Context, tests []*Test, report func(*Verdict)) ([]*Verdict, error) {
 	outs := make([]Output, len(tests))
 	finished := make([]bool, len(tests)) // ran to the end before ctx was done
 	done := make([]chan struct{}, len(tests))
@@ -111,25 +120,18 @@ func (r *Runner) Run(ctx context.Context, tests []*Test, stdout, stderr io.Write
 	}
 	defer wg.Wait()
 
-	var s tally
+	var verdicts []*Verdict
 	for i, t := range tests {
 		if !ready(ctx, done[i]) || !finished[i] {
-			fmt.Fprintln(stderr, "gogrep: interrupted")
-			return 130
+			return verdicts, ctx.Err()
 		}
-		v := r.judge(t, outs[i], stderr)
-		s.add(t, v)
-		v.print(stdout, i+1, len(tests), t)
-		if r.ShowOutput && t.Rule != nil {
-			// opengrep ran in the fixture, on sample paths relative to it.
-			fmt.Fprintf(stdout, "  $ (cd %s && %s)\n", commandLine([]string{t.Name}), commandLine(r.args(t)))
-			for _, l := range quoted(outs[i].Stderr) {
-				fmt.Fprintf(stdout, "  %s\n", l)
-			}
+		v := r.judge(t, outs[i])
+		verdicts = append(verdicts, v)
+		if report != nil {
+			report(v)
 		}
 	}
-	s.print(stdout)
-	return s.code()
+	return verdicts, nil
 }
 
 // ready waits until done is closed or ctx is done, and reports whether done
