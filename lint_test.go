@@ -706,6 +706,26 @@ func TestLintOpengrep(t *testing.T) {
 		}
 	})
 
+	// A rule file that opengrep cannot parse has no findings but a
+	// diagnostic, a syntax error that names it.
+	t.Run("syntax error", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		writeTree(t, dir, map[string]string{"other/broken.yaml": "rules:\n  - id: broken\n    pattern: [unclosed\n", "other/bare.yaml": rule("bare", "go")})
+		res, err := e.Lint(ctx, dir, &LintOptions{Paths: []string{"other"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ok := len(res.Diagnostics) == 1 && res.Complete && ruleIDs(res.Result, "other/broken.yaml") == nil && len(ruleIDs(res.Result, "other/bare.yaml")) == 2
+		for _, d := range res.Diagnostics {
+			ok = ok && d.ID == "Other syntax error" && (strings.HasPrefix(d.Message, "Other syntax error at line other/broken.yaml:3:") ||
+				strings.HasPrefix(d.Message, `Other syntax error at line other\broken.yaml:3:`))
+		}
+		if !ok {
+			t.Errorf("Lint of a broken rule file = %+v, %+v, complete %v; want the bare rule's findings and one syntax error at line other/broken.yaml:3", res.Findings, res.Diagnostics, res.Complete)
+		}
+	})
+
 	// A symlinked rules directory and a symlinked rule file are linted by
 	// the files they lead to, which the findings name.
 	t.Run("symlinks", func(t *testing.T) {

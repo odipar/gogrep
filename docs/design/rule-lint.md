@@ -34,8 +34,12 @@ gogrep lint [--suite NAME] [--sarif] [path...]
   ```
   opengrep/gogrep/rules/go/bare.yaml:2:5: opengrep-rules.yaml.semgrep.metadata-category (INFO): <message>
   ```
-  then a summary on stderr: `2 problems in 1 of 2 rule files.` or `No problems in 2 rule files.` (rule files are those `Engine.Lint` scanned, `LintResult.Files`). `--sarif` writes the rebranded SARIF log to stdout instead, with no summary.
-- **Exit codes:** 0 no findings, 1 findings, 2 usage or setup errors (as `gogrep test`).
+  A rule file that opengrep cannot parse gets no findings but a syntax-error notification (`Other syntax error at line <file>:<line>: …`, also `Syntax error` or `Lexical error`), which `Engine.Lint` leaves in `Result.Diagnostics`. `gogrep lint` counts each such notification that names a linted file as a problem of the check `syntax-error`, at that line (or line 1), with the rest of the message:
+  ```
+  rules/no-panic.yaml:3:1: syntax-error (ERROR): (approximate error location; error nearby after) error calling parser: …
+  ```
+  Its other notifications go to stderr as `gogrep: opengrep: <message>`. Then a summary on stderr: `2 problems in 1 of 2 rule files.` or `No problems in 2 rule files.` (rule files are those `Engine.Lint` scanned, `LintResult.Files`). `--sarif` writes the rebranded SARIF log to stdout instead, with no summary.
+- **Exit codes:** 0 no problems, 1 problems (findings that nosemgrep does not suppress, or syntax errors), also with `--sarif`, 2 usage or setup errors (as `gogrep test`).
 - Other flags are an error (exit 2); `gogrep lint` does not forward flags to opengrep.
 
 ## 3. `Engine.Lint`

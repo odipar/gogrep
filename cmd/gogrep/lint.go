@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/odipar/gogrep"
@@ -23,7 +24,8 @@ Paths are rule files and directories relative to, and inside, the current
 directory (default opengrep/gogrep/rules). Every .yaml and .yml file below
 them is linted, whatever .semgrepignore and .gitignore say, and a symlink as
 the file inside the current directory that it leads to. The rule test
-fixtures under opengrep/gogrep/rules/test are never linted.
+fixtures under opengrep/gogrep/rules/test are never linted. A rule file that
+opengrep cannot parse is a problem of the check syntax-error.
 
 Flags:
   --suite NAME   lint with suite NAME (default rule-lint); a project suite of
@@ -77,8 +79,9 @@ func lintSuite(sel selection) (string, error) {
 // runLint implements gogrep lint: it runs the lint suite on the rule files
 // under the paths of args, prints the problems it finds and a summary, or
 // the SARIF log, and returns the exit code. Suppressed findings are no
-// problems. The rule files of the summary are those Lint scanned, and any
-// other file that a problem is in.
+// problems, but rule files that opengrep cannot parse are. The rule files of
+// the summary are those Lint scanned, and any other file that a problem is
+// in.
 func (c *cli) runLint(args []string, sel selection) int {
 	a, err := parseLintArgs(args)
 	var suite string
@@ -126,6 +129,14 @@ func (c *cli) runLint(args []string, sel selection) int {
 		return 2
 	}
 	problems := slices.DeleteFunc(slices.Clone(res.Findings), func(f gogrep.Finding) bool { return f.Suppressed })
+	var notes []gogrep.Diagnostic
+	for _, d := range res.Diagnostics {
+		if f, ok := syntaxError(d, res.Files); ok {
+			problems = append(problems, f)
+		} else {
+			notes = append(notes, d)
+		}
+	}
 	code := 0
 	if len(problems) > 0 {
 		code = 1
@@ -148,7 +159,7 @@ func (c *cli) runLint(args []string, sel selection) int {
 		withProblems[path.Clean(f.Path)] = true
 		files[path.Clean(f.Path)] = true
 	}
-	for _, d := range res.Diagnostics {
+	for _, d := range notes {
 		fmt.Fprintf(c.stderr, "gogrep: opengrep: %s\n", oneLine(d.Message))
 	}
 	if len(problems) == 0 {
@@ -157,6 +168,42 @@ func (c *cli) runLint(args []string, sel selection) int {
 		fmt.Fprintf(c.stderr, "%s in %d of %s.\n", count(len(problems), "problem"), len(withProblems), count(len(files), "rule file"))
 	}
 	return code
+}
+
+// syntaxErrorIDs are the ids of opengrep's notifications that it could not
+// parse a file.
+var syntaxErrorIDs = []string{"Syntax error", "Other syntax error", "Lexical error"}
+
+// syntaxError returns, as a problem of the check syntax-error, the
+// diagnostic d when it reports that opengrep could not parse one of the rule
+// files: "<kind> at line <file>:<line>: <message>". The problem is at that
+// line, or line 1, and its message is the rest of d's.
+func syntaxError(d gogrep.Diagnostic, files []string) (gogrep.Finding, bool) {
+	_, loc, ok := strings.Cut(d.Message, " at line ")
+	if !ok || !slices.Contains(syntaxErrorIDs, d.ID) {
+		return gogrep.Finding{}, false
+	}
+	var file, rest string
+	for _, f := range files {
+		for _, name := range []string{f, filepath.FromSlash(f)} {
+			if after, ok := strings.CutPrefix(loc, name+":"); ok && len(f) > len(file) {
+				file, rest = f, after
+			}
+		}
+	}
+	if file == "" {
+		return gogrep.Finding{}, false
+	}
+	digits := rest[:len(rest)-len(strings.TrimLeft(rest, "0123456789"))]
+	line, err := strconv.Atoi(digits)
+	if err != nil || line < 1 {
+		line = 1
+	}
+	msg := oneLine(strings.TrimPrefix(rest[len(digits):], ":"))
+	if msg == "" {
+		msg = oneLine(d.Message)
+	}
+	return gogrep.Finding{RuleID: "syntax-error", Level: "error", Message: msg, Path: file, StartLine: line, StartColumn: 1}, true
 }
 
 // severity returns the opengrep severity that a finding's SARIF level stands

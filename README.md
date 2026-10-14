@@ -512,6 +512,28 @@ $ gogrep lint
 No problems in 2 rule files.
 ```
 
+A rule file that opengrep cannot parse is a problem too, of the check
+`syntax-error`, at the line opengrep names. Take a rule kept in `rules/`
+whose `languages` list is not closed:
+
+```yaml
+# rules/no-panic.yaml
+rules:
+  - id: no-panic
+    languages: [go
+    severity: WARNING
+    message: Return an error instead of panicking
+    pattern: panic(...)
+```
+
+```console
+$ gogrep lint rules/
+rules/no-panic.yaml:3:1: syntax-error (ERROR): (approximate error location; error nearby after) error calling parser: did not find expected ',' or ']' character 0 position 0 returned: 0
+1 problem in 1 of 1 rule file.
+$ echo $?
+1
+```
+
 **Rule files** are the `.yaml` and `.yml` files below the paths, also
 those that `.semgrepignore`, `.gitignore` or opengrep's default ignores
 (such as `tests/` and `vendor/`) hide from a scan: `gogrep lint` names each
@@ -665,7 +687,8 @@ absolute directory, and the ones that run opengrep take a `context.Context`.
 `Lint` is the library's [`gogrep lint`](#6-lint-custom-rules): a `Scan`,
 with the `rule-lint` suite, of the rule files in `opengrep/gogrep/rules`,
 or in `LintOptions.Paths`, which it lists in `Files`; its findings are the
-problems:
+problems, and a rule file that opengrep cannot parse shows up in
+`Diagnostics` as a syntax error:
 
 ```go
 res, err := eng.Lint(ctx, "/abs/project", nil) // or &gogrep.LintOptions{Paths: []string{"rules"}}

@@ -194,9 +194,12 @@ type fakeResult struct {
 	suppressed         bool
 }
 
+// A fakeNote is a notification of the SARIF log that fakeLintLog makes.
+type fakeNote struct{ id, msg string }
+
 // fakeLintLog makes the fake opengrep print a SARIF log with results and
-// with notes as the messages of its run's notifications.
-func fakeLintLog(t *testing.T, results []fakeResult, notes ...string) {
+// notes as its run's notifications.
+func fakeLintLog(t *testing.T, results []fakeResult, notes ...fakeNote) {
 	t.Helper()
 	rs := []any{}
 	for _, r := range results {
@@ -218,7 +221,7 @@ func fakeLintLog(t *testing.T, results []fakeResult, notes ...string) {
 	}
 	ns := []any{}
 	for _, n := range notes {
-		ns = append(ns, map[string]any{"level": "warning", "descriptor": map[string]any{"id": "Other syntax error"}, "message": map[string]any{"text": n}})
+		ns = append(ns, map[string]any{"level": "warning", "descriptor": map[string]any{"id": n.id}, "message": map[string]any{"text": n.msg}})
 	}
 	data, err := json.Marshal(map[string]any{"version": "2.1.0", "runs": []any{map[string]any{
 		"tool":        map[string]any{"driver": map[string]any{"name": "opengrep"}},
@@ -236,8 +239,9 @@ func fakeLintLog(t *testing.T, results []fakeResult, notes ...string) {
 }
 
 // The problems are printed one per line, sorted by path, line, column and
-// rule id, then the summary and opengrep's notifications on stderr;
-// suppressed findings are no problems. --sarif prints the log instead.
+// rule id, then opengrep's other notifications and the summary on stderr;
+// suppressed findings are no problems, a syntax error in a rule file is
+// one. --sarif prints the log instead.
 func TestLintOutput(t *testing.T) {
 	useFakeOpengrep(t, 0)
 	dir := t.TempDir()
@@ -258,16 +262,18 @@ func TestLintOutput(t *testing.T) {
 		{a, 2, 5, 3, "r.y", "note", "First, by rule id", false},
 		{a, 2, 5, 9, "r.x", "error", "  Spread\n  over\n\n  lines  ", false},
 		{c, 1, 1, 1, "r.x", "error", "Suppressed", true},
-	}, "Syntax error at line opengrep/gogrep/rules/go/b.yaml:3:\n bad")
+	}, fakeNote{"Other syntax error", "Other syntax error at line opengrep/gogrep/rules/go/b.yaml:3:\n bad"},
+		fakeNote{"Timeout", "Timeout when running r.v on opengrep/gogrep/rules/go/c.yml:\n  took too long"})
 
 	code, stdout, stderr := runGogrep("lint")
 	wantOut := a + ":2:5: r.x (ERROR): Spread over lines\n" +
 		a + ":2:5: r.y (INFO): First, by rule id\n" +
 		a + ":2:7: r.v (WARNING): Second\n" +
 		a + ":3:1: r.w (ERROR): Third\n" +
-		b + ":1:1: r.z (WARNING): No level\n"
-	wantErr := "gogrep: opengrep: Syntax error at line opengrep/gogrep/rules/go/b.yaml:3: bad\n" +
-		"5 problems in 2 of 3 rule files.\n"
+		b + ":1:1: r.z (WARNING): No level\n" +
+		b + ":3:1: syntax-error (ERROR): bad\n"
+	wantErr := "gogrep: opengrep: Timeout when running r.v on opengrep/gogrep/rules/go/c.yml: took too long\n" +
+		"6 problems in 2 of 3 rule files.\n"
 	if code != 1 || stdout != wantOut || stderr != wantErr {
 		t.Errorf("gogrep lint = %d, stdout\n%s\nstderr\n%s\nwant 1, stdout\n%s\nstderr\n%s", code, stdout, stderr, wantOut, wantErr)
 	}
@@ -313,6 +319,40 @@ func TestLintSummary(t *testing.T) {
 			fakeLintLog(t, tt.results)
 			if code, _, stderr := runGogrep(tt.args...); code != tt.code || stderr != tt.stderr {
 				t.Errorf("gogrep %q = %d, %q; want %d, %q", tt.args, code, stderr, tt.code, tt.stderr)
+			}
+		})
+	}
+}
+
+// A notification that opengrep could not parse a rule file is a problem of
+// the check syntax-error, at the line it names or line 1, also with --sarif;
+// other notifications, and those about other files, are not.
+func TestLintSyntaxErrors(t *testing.T) {
+	useFakeOpengrep(t, 0)
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"one/a.yaml": bareRule, "one/a.yaml.yaml": bareRule, "two/sub/b.yml": bareRule})
+	t.Chdir(dir)
+	const parser = "(approximate error location; error nearby after) error calling parser: did not find expected ',' or ']' character 0 position 0 returned: 0"
+	for _, tt := range []struct {
+		note   fakeNote
+		code   int
+		stdout string
+		stderr string
+	}{
+		{fakeNote{"Other syntax error", "Other syntax error at line one/a.yaml:4:\n " + parser}, 1, "one/a.yaml:4:1: syntax-error (ERROR): " + parser + "\n", "1 problem in 1 of 3 rule files.\n"},
+		{fakeNote{"Syntax error", "Syntax error at line two/sub/b.yml:12:\n `x` was unexpected"}, 1, "two/sub/b.yml:12:1: syntax-error (ERROR): `x` was unexpected\n", "1 problem in 1 of 3 rule files.\n"},
+		{fakeNote{"Lexical error", "Lexical error at line " + filepath.FromSlash("two/sub/b.yml") + ": bad"}, 1, "two/sub/b.yml:1:1: syntax-error (ERROR): bad\n", "1 problem in 1 of 3 rule files.\n"},
+		{fakeNote{"Other syntax error", "Other syntax error at line one/a.yaml.yaml:2:"}, 1, "one/a.yaml.yaml:2:1: syntax-error (ERROR): Other syntax error at line one/a.yaml.yaml:2:\n", "1 problem in 1 of 3 rule files.\n"},
+		{fakeNote{"Other syntax error", "Other syntax error at line elsewhere.yaml:3:\n bad"}, 0, "", "gogrep: opengrep: Other syntax error at line elsewhere.yaml:3: bad\nNo problems in 3 rule files.\n"},
+		{fakeNote{"Timeout", "Timeout at line one/a.yaml:3:\n slow"}, 0, "", "gogrep: opengrep: Timeout at line one/a.yaml:3: slow\nNo problems in 3 rule files.\n"},
+	} {
+		t.Run(tt.note.msg, func(t *testing.T) {
+			fakeLintLog(t, nil, tt.note)
+			if code, stdout, stderr := runGogrep("lint", "one", "two"); code != tt.code || stdout != tt.stdout || stderr != tt.stderr {
+				t.Errorf("gogrep lint = %d, %q, %q; want %d, %q, %q", code, stdout, stderr, tt.code, tt.stdout, tt.stderr)
+			}
+			if code, _, stderr := runGogrep("lint", "--sarif", "one", "two"); code != tt.code || stderr != "" {
+				t.Errorf("gogrep lint --sarif = %d, %q; want %d, no stderr", code, stderr, tt.code)
 			}
 		})
 	}
@@ -378,5 +418,12 @@ func TestLintRules(t *testing.T) {
 	code, stdout, stderr = runGogrep("lint", "opengrep/gogrep/rules/go/no-exec-command.yaml", "opengrep/gogrep/rules/generic")
 	if code != 0 || stdout != "" || stderr != "No problems in 2 rule files.\n" {
 		t.Errorf("gogrep lint of the example rules = %d, %q, %q; want 0, no stdout, %q", code, stdout, stderr, "No problems in 2 rule files.\n")
+	}
+
+	// A rule file that opengrep cannot parse is a problem.
+	writeTree(t, ".", map[string]string{"other/broken.yaml": "rules:\n  - id: broken\n    pattern: [unclosed\n"})
+	code, stdout, stderr = runGogrep("lint", "other")
+	if want := "other/broken.yaml:3:1: syntax-error (ERROR): "; code != 1 || !strings.HasPrefix(stdout, want) || strings.Count(stdout, "\n") != 1 || stderr != "1 problem in 1 of 1 rule file.\n" {
+		t.Errorf("gogrep lint of a broken rule file = %d, %q, %q; want 1, a problem %q..., %q", code, stdout, stderr, want, "1 problem in 1 of 1 rule file.\n")
 	}
 }

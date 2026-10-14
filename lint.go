@@ -76,6 +76,10 @@ type LintResult struct {
 // error. When there are no rule files, Lint runs no opengrep and returns a
 // complete Result without findings, whose SARIF log has no rules.
 //
+// A rule file that opengrep cannot parse has no findings: it appears in
+// Result.Diagnostics, as a syntax error ("Other syntax error at line
+// <file>:<line>: ..."). gogrep lint counts that as a problem.
+//
 // Errors are Scan's, plus plain errors for a path that is not a relative
 // path inside dir, does not exist, lies in ProjectTestsDir or is a file but
 // not a rule file; for a directory below a path that cannot be read; for a
