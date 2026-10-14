@@ -120,8 +120,8 @@ func TestLoadEnvProjectErrors(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"opengrep/gogrep/rules/go/bad.yaml": "rules: [\n"})
 	e := newEngine(t, Config{})
-	if _, err := e.loadEnv(dir, false); err == nil || !strings.HasPrefix(err.Error(), "project/go/bad.yaml: yaml: ") {
-		t.Errorf("loadEnv of a broken project rule = %v, want a project/go/bad.yaml error", err)
+	if _, err := e.loadEnv(dir, false); err == nil || !strings.HasPrefix(err.Error(), "opengrep/gogrep/rules/go/bad.yaml: yaml: ") {
+		t.Errorf("loadEnv of a broken project rule = %v, want an error that names opengrep/gogrep/rules/go/bad.yaml", err)
 	}
 	if env, err := e.loadEnv(dir, true); err != nil || env.Sets["project"] != nil {
 		t.Errorf("loadEnv without project rules = %v, %v; want an empty project set", env.Sets["project"], err)

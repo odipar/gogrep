@@ -1,6 +1,7 @@
 package gogrep
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -300,7 +301,9 @@ func (e *Engine) loadEnv(dir string, noProject bool) (*suite.Env, error) {
 	return env, nil
 }
 
-// projectRules parses the "project" rule set of the project in dir.
+// projectRules parses the "project" rule set of the project in dir. A rule
+// file that does not parse is an error that names it by its path in dir,
+// under ProjectRulesDir.
 func projectRules(dir string, noProject bool) ([]*rules.Rule, error) {
 	if dir == "" || noProject {
 		return nil, nil
@@ -314,6 +317,9 @@ func projectRules(dir string, noProject bool) ([]*rules.Rule, error) {
 		return nil, fmt.Errorf("reading %s: %w", rel, err)
 	}
 	parsed, err := parse(map[string]rules.Set{"project": set})
+	if fe := (*rules.FileError)(nil); errors.As(err, &fe) {
+		return nil, fmt.Errorf("%s/%s: %w", ProjectRulesDir, fe.Path, fe.Err)
+	}
 	return parsed["project"], err
 }
 
