@@ -251,3 +251,30 @@ func TestConcurrentCalls(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// A project suite that imports its own name extends the built-in suite it
+// overrides instead of importing itself; without a built-in of that name,
+// the import is still a cycle.
+func TestSuiteExtendsShadowed(t *testing.T) {
+	t.Parallel()
+	e := newEngine(t, Config{})
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		ProjectSuitesDir + "/rule-lint.yaml": "- import: rule-lint\n- exclude:\n    id: /\\.metadata-technology$/\n",
+		ProjectSuitesDir + "/mine.yaml":      "- import: mine\n",
+	})
+	builtIn, err := e.Rules("", &RulesOptions{Selection: Selection{Suites: []string{LintSuite}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.Rules(dir, &RulesOptions{Selection: Selection{Suites: []string{LintSuite}}})
+	if err != nil {
+		t.Fatalf("Rules with the overriding suite: %v", err)
+	}
+	if len(got) != len(builtIn)-1 || slices.ContainsFunc(got, func(r Rule) bool { return strings.HasSuffix(r.ID, ".metadata-technology") }) {
+		t.Errorf("the override selects %d rules, want the %d built-in ones without metadata-technology", len(got), len(builtIn))
+	}
+	if _, err := e.Rules(dir, &RulesOptions{Selection: Selection{Suites: []string{"mine"}}}); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("a suite importing itself with nothing built in: err = %v, want an import cycle", err)
+	}
+}

@@ -287,6 +287,13 @@ func (e *Engine) loadEnv(dir string, noProject bool) (*suite.Env, error) {
 		Groups: map[string][]string{"bundled": slices.Collect(maps.Keys(bundled))},
 		Load:   e.loader(dir, noProject, false),
 		Import: e.loader(dir, noProject, true),
+		Shadowed: func(name string) (*suite.Suite, error) {
+			data, err := fs.ReadFile(e.src.suites, name+".yaml")
+			if err != nil {
+				return nil, nil // nothing built in to extend: the import is resolved as usual
+			}
+			return parseSuite("built-in "+name, data)
+		},
 	}
 	maps.Copy(env.Sets, bundled)
 	env.Groups["all"] = slices.Collect(maps.Keys(env.Sets))

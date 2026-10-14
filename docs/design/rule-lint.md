@@ -17,7 +17,7 @@ A new built-in suite, `suites/rule-lint.yaml`:
 
 - It selects exactly the 45 `yaml.semgrep.*` rules: missing `category` / `technology`; for `category: security` missing `subcategory`, `confidence`, `likelihood`, `impact`; invalid values of those; malformed `cwe`, `owasp`, `references`; missing `message` or `languages`; duplicate ids and patterns; slow or unsatisfiable patterns; and more.
 - It ends with a filter, so no `gogrep` or `project` rules are added.
-- A project can override it, like any built-in suite, with `opengrep/gogrep/suites/rule-lint.yaml`, for example to `import: rule-lint` and `exclude` checks it does not want.
+- A project can override it, like any built-in suite, with `opengrep/gogrep/suites/rule-lint.yaml`, for example to `import: rule-lint` and `exclude` checks it does not want. A project suite that imports its own name gets the built-in suite it overrides (`suite.Env.Shadowed`), not itself; before this change that was an import cycle.
 - `gogrep scan --suite rule-lint <paths>` works as a plain scan too.
 
 ## 2. `gogrep lint`

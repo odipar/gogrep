@@ -543,16 +543,14 @@ and no `opengrep/gogrep/rules/`.
 
 **Changing the checks.** A project suite named `rule-lint` replaces the
 built-in one, as for every built-in suite, and `gogrep lint` then runs it.
-It cannot import the suite it replaces, which would be an import cycle, so
-it repeats the built-in's lines and adds its own filters. To drop the
-`technology` check:
+Importing its own name gives it the built-in suite it replaces, so it can
+start from the built-in checks and filter them. To drop the `technology`
+check:
 
 ```yaml
 # opengrep/gogrep/suites/rule-lint.yaml
 - description: Rule-quality checks, without the technology check
-- rules: bundled
-- include:
-    id: /^opengrep-rules\.yaml\.semgrep\./
+- import: rule-lint
 - exclude:
     id: /\.metadata-technology$/
 ```
@@ -565,8 +563,8 @@ rule-lint                project   44     Rule-quality checks, without the techn
 ...
 ```
 
-A suite with another name can import `rule-lint` and filter it, for runs
-with `gogrep lint --suite quick-lint`:
+A suite with another name works the same way, for runs with
+`gogrep lint --suite quick-lint`:
 
 ```yaml
 # opengrep/gogrep/suites/quick-lint.yaml
