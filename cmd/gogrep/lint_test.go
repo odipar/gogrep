@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -95,23 +96,26 @@ func TestLintUsage(t *testing.T) {
 	})
 }
 
-// A lint scans opengrep/gogrep/rules by default, or the paths it is given,
-// with the rule-lint suite or the one --suite names.
+// A lint scans the rule files of opengrep/gogrep/rules by default, or of
+// the paths it is given, with the rule-lint suite or the one --suite names.
 func TestLintTargets(t *testing.T) {
 	useFakeOpengrep(t, 0)
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
 		"opengrep/gogrep/rules/go/bare.yaml": bareRule,
 		"more/rules.yml":                     bareRule,
+		"more/vendor/rules.yaml":             bareRule,
+		"more/README.md":                     "Rules\n",
 	})
 	t.Chdir(dir)
+	bare, more, vendored := filepath.FromSlash("opengrep/gogrep/rules/go/bare.yaml"), filepath.FromSlash("more/rules.yml"), filepath.FromSlash("more/vendor/rules.yaml")
 	for _, tt := range []struct {
 		args    []string
 		targets []string
 	}{
-		{[]string{"lint", "--sarif"}, []string{filepath.FromSlash("opengrep/gogrep/rules")}},
-		{[]string{"lint", "--sarif", "more", "opengrep/gogrep/rules/go/bare.yaml"}, []string{"more", "opengrep/gogrep/rules/go/bare.yaml"}},
-		{[]string{"lint", "--suite", "code-scanning", "--sarif", "more"}, []string{"more"}},
+		{[]string{"lint", "--sarif"}, []string{bare}},
+		{[]string{"lint", "--sarif", "opengrep/gogrep/rules/go/bare.yaml", "more"}, []string{more, vendored, bare}},
+		{[]string{"lint", "--suite", "code-scanning", "--sarif", "more"}, []string{more, vendored}},
 	} {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
 			code, stdout, stderr := runGogrep(tt.args...)
@@ -128,6 +132,58 @@ func TestLintTargets(t *testing.T) {
 			}
 		})
 	}
+}
+
+// gogrep lint counts the rule files that Engine.Lint scans, also those that
+// ignore files hide from a scan; without any it prints an empty SARIF log.
+// Lint's errors about the files are setup errors.
+func TestLintFiles(t *testing.T) {
+	useFakeOpengrep(t, 0)
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		".semgrepignore":                            "opengrep/\n",
+		"opengrep/gogrep/rules/go/a.yaml":           bareRule,
+		"opengrep/gogrep/rules/go/tests/b.yaml":     bareRule,
+		"opengrep/gogrep/rules/node_modules/c.yaml": bareRule,
+		"other/d.yml":                               bareRule,
+		"other/private/e.yaml":                      bareRule,
+		"code/main.go":                              "package main\n",
+	})
+	t.Chdir(dir)
+	if code, stdout, stderr := runGogrep("lint"); code != 0 || stdout != "" || stderr != "No problems in 3 rule files.\n" {
+		t.Errorf("gogrep lint = %d, %q, %q; want 0, no stdout, 3 rule files", code, stdout, stderr)
+	}
+	code, stdout, stderr := runGogrep("lint", "--sarif", "code")
+	if driver, _ := sarifRun(t, stdout); code != 0 || stderr != "" || driver != "gogrep" || strings.Contains(stdout, `"ruleId"`) {
+		t.Errorf("gogrep lint --sarif code = %d, %q, %q; want 0, gogrep's log without results, no stderr", code, stdout, stderr)
+	}
+
+	t.Run("unreadable directory", func(t *testing.T) {
+		if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+			t.Skip("needs a directory that its owner cannot read")
+		}
+		if err := os.Chmod(filepath.Join(dir, "other", "private"), 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(filepath.Join(dir, "other", "private"), 0o700) })
+		code, stdout, stderr := runGogrep("lint", "other")
+		if want := "gogrep: open other/private: permission denied\n"; code != 2 || stdout != "" || stderr != want {
+			t.Errorf("gogrep lint other = %d, %q, %q; want 2, no stdout, %q", code, stdout, stderr, want)
+		}
+	})
+
+	t.Run("symlink outside", func(t *testing.T) {
+		link, outside := filepath.Join(dir, "opengrep", "gogrep", "rules", "go", "out.yaml"), t.TempDir()
+		writeTree(t, outside, map[string]string{"out.yaml": bareRule})
+		if err := os.Symlink(filepath.Join(outside, "out.yaml"), link); err != nil {
+			t.Skipf("cannot create symlinks: %v", err)
+		}
+		t.Cleanup(func() { os.Remove(link) })
+		code, stdout, stderr := runGogrep("lint")
+		if want := "gogrep: opengrep/gogrep/rules/go/out.yaml leads outside the directory through a symlink\n"; code != 2 || stdout != "" || stderr != want {
+			t.Errorf("gogrep lint = %d, %q, %q; want 2, no stdout, %q", code, stdout, stderr, want)
+		}
+	})
 }
 
 // A fakeResult is a result of the SARIF log that fakeLintLog makes.
@@ -248,8 +304,10 @@ func TestLintSummary(t *testing.T) {
 		{[]string{"lint", "two", "one"}, []fakeResult{{path: "one/a.yaml", rule: "r"}, {path: "two/a.yaml", rule: "r"}}, 1, "2 problems in 2 of 3 rule files.\n"},
 		{[]string{"lint", "one"}, []fakeResult{{path: "one/a.yaml", rule: "r", suppressed: true}}, 0, "No problems in 1 rule file.\n"},
 		{[]string{"lint", "code"}, nil, 0, "No problems in 0 rule files.\n"},
-		// Another suite can find problems in other files, which count too.
-		{[]string{"lint", "--suite", "code-scanning", "code"}, []fakeResult{{path: "code/main.go", rule: "r"}}, 1, "1 problem in 1 of 1 rule file.\n"},
+		// Without rule files opengrep does not run, and finds nothing.
+		{[]string{"lint", "--suite", "code-scanning", "code"}, []fakeResult{{path: "code/main.go", rule: "r"}}, 0, "No problems in 0 rule files.\n"},
+		// A problem in another file counts that file too.
+		{[]string{"lint", "--suite", "code-scanning", "one"}, []fakeResult{{path: "code/main.go", rule: "r"}}, 1, "1 problem in 1 of 2 rule files.\n"},
 	} {
 		t.Run(fmt.Sprint(tt.args, len(tt.results)), func(t *testing.T) {
 			fakeLintLog(t, tt.results)

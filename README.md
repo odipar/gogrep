@@ -512,13 +512,20 @@ $ gogrep lint
 No problems in 2 rule files.
 ```
 
+**Rule files** are the `.yaml` and `.yml` files below the paths, also
+those that `.semgrepignore`, `.gitignore` or opengrep's default ignores
+(such as `tests/` and `vendor/`) hide from a scan: `gogrep lint` names each
+file to opengrep. A symlink is linted as the file it leads to, which must
+lie inside the current directory; symlinked directories below a path are
+not entered.
+
 **Options.** Paths, relative to and inside the current directory, name
 other rule files and directories to lint, e.g. `gogrep lint rules/`; a path
-among the rule test fixtures is an error. `--suite NAME` lints with another suite, and
-`--sarif` writes the problems to stdout as a SARIF log, without the summary.
-`gogrep lint` takes no other flags and passes none to opengrep. Exit codes:
-0 no problems, 1 problems found, 2 usage or setup error, such as no paths
-and no `opengrep/gogrep/rules/`.
+among the rule test fixtures is an error. `--suite NAME` lints with another
+suite, and `--sarif` writes the problems to stdout as a SARIF log, without
+the summary. `gogrep lint` takes no other flags and passes none to
+opengrep. Exit codes: 0 no problems, 1 problems found, 2 usage or setup
+error, such as no paths and no `opengrep/gogrep/rules/`.
 
 **The checks** are the 45 rule-quality rules of opengrep-rules
 (`opengrep-rules.yaml.semgrep.*`), which make up the built-in suite
@@ -655,9 +662,10 @@ for _, f := range res.Findings {
 a repository's rule test fixtures (`Test`, `AcceptTests`), lints its rules
 (`Lint`), and prunes its cache (`PruneCache`). Every method takes an
 absolute directory, and the ones that run opengrep take a `context.Context`.
-`Lint` is the library's [`gogrep lint`](#6-lint-custom-rules): a `Scan` of
-`opengrep/gogrep/rules`, or of `LintOptions.Paths`, with the `rule-lint`
-suite, whose findings are the problems:
+`Lint` is the library's [`gogrep lint`](#6-lint-custom-rules): a `Scan`,
+with the `rule-lint` suite, of the rule files in `opengrep/gogrep/rules`,
+or in `LintOptions.Paths`, which it lists in `Files`; its findings are the
+problems:
 
 ```go
 res, err := eng.Lint(ctx, "/abs/project", nil) // or &gogrep.LintOptions{Paths: []string{"rules"}}
@@ -667,6 +675,7 @@ if err != nil {
 for _, f := range res.Findings {
 	fmt.Printf("%s:%d:%d: %s\n", f.Path, f.StartLine, f.StartColumn, f.RuleID)
 }
+fmt.Println(len(res.Files), "rule files")
 ```
 
 - **Getting opengrep.** The module contains the rule sets but not the

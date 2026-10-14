@@ -20,8 +20,10 @@ const lintUsage = `Usage:
   gogrep lint [--suite NAME] [--sarif] [path...]   check opengrep rule files
 
 Paths are rule files and directories relative to, and inside, the current
-directory (default opengrep/gogrep/rules). The rule test fixtures under
-opengrep/gogrep/rules/test are never linted.
+directory (default opengrep/gogrep/rules). Every .yaml and .yml file below
+them is linted, whatever .semgrepignore and .gitignore say, and a symlink as
+the file inside the current directory that it leads to. The rule test
+fixtures under opengrep/gogrep/rules/test are never linted.
 
 Flags:
   --suite NAME   lint with suite NAME (default rule-lint); a project suite of
@@ -75,8 +77,8 @@ func lintSuite(sel selection) (string, error) {
 // runLint implements gogrep lint: it runs the lint suite on the rule files
 // under the paths of args, prints the problems it finds and a summary, or
 // the SARIF log, and returns the exit code. Suppressed findings are no
-// problems. A file with a problem counts as a rule file even when it is not
-// YAML, as with another suite.
+// problems. The rule files of the summary are those Lint scanned, and any
+// other file that a problem is in.
 func (c *cli) runLint(args []string, sel selection) int {
 	a, err := parseLintArgs(args)
 	var suite string
@@ -99,7 +101,8 @@ func (c *cli) runLint(args []string, sel selection) int {
 		}
 		paths = []string{filepath.FromSlash(gogrep.ProjectRulesDir)}
 	}
-	// opengrep reports a missing path only once it has run, as exit code 2.
+	// Lint's errors for these name no current directory, and its error for
+	// a missing path is a stat error.
 	for _, p := range paths {
 		if !filepath.IsLocal(p) {
 			fmt.Fprintf(c.stderr, "gogrep: %s is not a relative path inside the current directory\n", p)
@@ -131,10 +134,9 @@ func (c *cli) runLint(args []string, sel selection) int {
 		c.stdout.Write(res.SARIF)
 		return code
 	}
-	files, err := ruleFiles(c.dir, paths)
-	if err != nil {
-		fmt.Fprintf(c.stderr, "gogrep: %v\n", err)
-		return 2
+	files := map[string]bool{}
+	for _, f := range res.Files {
+		files[f] = true
 	}
 	slices.SortStableFunc(problems, func(x, y gogrep.Finding) int {
 		return cmp.Or(strings.Compare(x.Path, y.Path), cmp.Compare(x.StartLine, y.StartLine),
@@ -155,39 +157,6 @@ func (c *cli) runLint(args []string, sel selection) int {
 		fmt.Fprintf(c.stderr, "%s in %d of %s.\n", count(len(problems), "problem"), len(withProblems), count(len(files), "rule file"))
 	}
 	return code
-}
-
-// ruleFiles returns the rule files that a lint of paths in dir scans, as
-// slash paths relative to dir: the .yaml and .yml files under the paths,
-// outside the rule test fixtures. opengrep reports no files it scanned, so
-// this is gogrep's count; it does not apply .semgrepignore or git's file
-// list.
-func ruleFiles(dir string, paths []string) (map[string]bool, error) {
-	files := map[string]bool{}
-	fixtures := strings.ToLower(gogrep.ProjectTestsDir)
-	for _, p := range paths {
-		err := filepath.WalkDir(filepath.Join(dir, p), func(name string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			rel, err := filepath.Rel(dir, name)
-			if err != nil {
-				return err
-			}
-			rel = filepath.ToSlash(rel)
-			if lower := strings.ToLower(rel); d.IsDir() && (lower == fixtures || strings.HasPrefix(lower, fixtures+"/")) {
-				return filepath.SkipDir
-			}
-			if ext := path.Ext(rel); d.Type().IsRegular() && (ext == ".yaml" || ext == ".yml") {
-				files[rel] = true
-			}
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-	return files, nil
 }
 
 // severity returns the opengrep severity that a finding's SARIF level stands

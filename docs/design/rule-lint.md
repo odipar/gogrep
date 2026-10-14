@@ -27,13 +27,14 @@ gogrep lint [--suite NAME] [--sarif] [path...]
 ```
 
 - **Paths** are files or directories relative to, and inside, the current directory; another path, such as `../rules`, exits 2 with `../rules is not a relative path inside the current directory`. With none, `opengrep/gogrep/rules` is linted; if it does not exist, `gogrep lint` exits 2 with `no opengrep/gogrep/rules here; name the rules to lint`.
-- **Fixtures are never linted:** `opengrep/gogrep/rules/test/` (the rule test fixtures, whose samples may be YAML) is excluded, as in every scan that uses gogrep's rules.
+- **Rule files** are chosen by `Engine.Lint`, not by opengrep's directory walk: every `.yaml` and `.yml` file below the paths, a path that is such a file, and the symlinks among them that lead to such a file inside the current directory, which stand for that file (a symlink that leads outside is an error). It enters no symlinked directory below a path; a path that is one, the default `opengrep/gogrep/rules` included, is resolved the same way. The files go to opengrep as named targets, so `.semgrepignore`, `.gitignore` and opengrep's default ignores (`tests/`, `vendor/`, `node_modules/`, …), which apply only to directories it walks, hide none of them: a rule file that loads as a project rule is always linted. An unreadable directory below a path is an error that names it. More files than fit in 30,000 bytes of arguments (Windows' command line holds 32,767 characters) are an error: `too many rule files (N); lint fewer paths at once`. Without rule files opengrep does not run.
+- **Fixtures are never linted:** `opengrep/gogrep/rules/test/` (the rule test fixtures, whose samples may be YAML) is skipped in any letter case, as when the project rules load, and a path inside it is an error.
 - **`--suite NAME`** lints with another suite (default `rule-lint`, resolved like `--suite`, so a project's override applies).
 - **Output:** one line per finding, sorted by path, line, column and rule id:
   ```
   opengrep/gogrep/rules/go/bare.yaml:2:5: opengrep-rules.yaml.semgrep.metadata-category (INFO): <message>
   ```
-  then a summary on stderr: `2 problems in 1 of 2 rule files.` or `No problems in 2 rule files.` (rule files are the YAML files scanned). `--sarif` writes the rebranded SARIF log to stdout instead, with no summary.
+  then a summary on stderr: `2 problems in 1 of 2 rule files.` or `No problems in 2 rule files.` (rule files are those `Engine.Lint` scanned, `LintResult.Files`). `--sarif` writes the rebranded SARIF log to stdout instead, with no summary.
 - **Exit codes:** 0 no findings, 1 findings, 2 usage or setup errors (as `gogrep test`).
 - Other flags are an error (exit 2); `gogrep lint` does not forward flags to opengrep.
 
@@ -53,13 +54,23 @@ type LintOptions struct {
 	Stderr io.Writer
 }
 
+// A LintResult is what one lint found: the Result of its scan, and the rule
+// files it scanned.
+type LintResult struct {
+	*Result
+	// Files are the rule files that the lint scanned, as slash paths
+	// relative to dir, sorted bytewise. A symlinked rule file is listed by
+	// the path it leads to, which opengrep scans and the findings name.
+	Files []string
+}
+
 // Lint runs the rule-quality checks of opts.Suite on the rule files under
 // opts.Paths of dir, never on the rule test fixtures, and returns the
 // result as Scan does: findings are not errors.
-func (e *Engine) Lint(ctx context.Context, dir string, opts *LintOptions) (*Result, error)
+func (e *Engine) Lint(ctx context.Context, dir string, opts *LintOptions) (*LintResult, error)
 ```
 
-- Lint is Scan with a fixed selection (`Selection{Suites: []string{suite}}`), `Targets` set to the paths, and project rules not added. Errors are Scan's, plus plain errors for a path that is not a relative path inside dir (`lint path "../x" is not a relative path inside the directory`) or lies in the fixtures, and one naming `opengrep/gogrep/rules` when no paths are given and it does not exist.
+- Lint is Scan with a fixed selection (`Selection{Suites: []string{suite}}`) and `Targets` set to the rule files of §2, which it returns as `Files`. Without rule files it runs no opengrep and returns a complete `Result` without findings, whose SARIF log has no rules. Errors are Scan's, plus plain errors for a path that is not a relative path inside dir (`lint path "../x" is not a relative path inside the directory`) does not exist, lies in the fixtures or is a file but not a rule file, for an unreadable directory, a symlink that leads outside dir and too many rule files, and one naming `opengrep/gogrep/rules` when no paths are given and it does not exist.
 - The CLI's `gogrep lint` is a thin layer over `Lint`, as `scan` is over `Scan`.
 
 ## 4. CI and repository
@@ -69,8 +80,8 @@ func (e *Engine) Lint(ctx context.Context, dir string, opts *LintOptions) (*Resu
 
 ## 5. Tests and docs
 
-- Unit tests: flag parsing and usage errors, output formatting and sorting, summary and exit codes (fake opengrep), the default path and its missing-directory error, the fixture exclusion.
-- Integration tests (real opengrep): a rule with no metadata gives `metadata-category` and `metadata-technology`; a security rule without `confidence` etc. gives those; the clean example rules give none; YAML samples under `test/` are not linted; `Engine.Lint` returns the same findings.
+- Unit tests: flag parsing and usage errors, output formatting and sorting, summary and exit codes (fake opengrep), the default path and its missing-directory error, the fixture exclusion in any letter case; the rule files and `Files` exactly, with ignored directories, symlinked files and directories, a symlink outside the directory, an unreadable directory, the argument limit, and no rule files (opengrep not run).
+- Integration tests (real opengrep): a rule with no metadata gives `metadata-category` and `metadata-technology`; a security rule without `confidence` etc. gives those; the clean example rules give none; YAML samples under `test/` are not linted; rule files that the default ignores, `.gitignore` or `.semgrepignore` hide from a scan are linted, and so are symlinked ones; `Engine.Lint` returns the same findings.
 - Docs: README section "6. Lint custom rules", `suites/README.md` built-in table, `rules/README.md`, `doc.go`/godoc.
 
 ## 6. Implementation plan

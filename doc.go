@@ -123,7 +123,9 @@
 //     a repository can make gogrep read any file outside it as rule YAML,
 //     and parse errors may quote it, or walk any directory tree and read
 //     every regular file in it. gogrep enters no symlinked directory below
-//     the rules directory. NoProjectRules ignores them.
+//     the rules directory. NoProjectRules ignores them. [Engine.Lint]
+//     follows a symlink only to a file inside the directory, and otherwise
+//     fails.
 //   - opengrep/gogrep/suites can replace the default suite with one that
 //     selects nothing. A project suite may be a symlink too, and its
 //     import: entries may name any file, so a repository can make gogrep
@@ -139,7 +141,9 @@
 //     [Result].Findings with Suppressed set; whether they count is the
 //     caller's choice.
 //   - .semgrepignore and .gitignore hide files from a scan, as opengrep
-//     reads them in the scanned directory. This cannot be turned off.
+//     reads them in the scanned directory. This cannot be turned off. They
+//     hide no rule file from [Engine.Lint], which names its files to
+//     opengrep.
 //   - .git/config: opengrep runs git in the scanned directory, and git
 //     honours the repository's configuration. Scan only directories whose
 //     .git your own git clone created; a clone never copies the remote's
