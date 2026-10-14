@@ -14,6 +14,7 @@ gogrep scan --rule '/sql-injection/' --suite all .    # union of rules and suite
 gogrep scan --suite all --gogrep-lang go .            # narrow any selection
 gogrep suites                            # list suites and their rule counts
 gogrep rules --suite code-scanning       # list the rules a selection picks
+gogrep lint                              # check opengrep/gogrep/rules with rule-lint
 ```
 
 ## Format
@@ -67,3 +68,4 @@ Values match case-insensitively. A field with several values (such as
 | `security-extended` | All security rules, including audit and low-confidence ones, plus `gogrep` and `project` rules. |
 | `security-and-quality` | Security, correctness, best-practice, performance, maintainability, portability and compatibility rules, `semgrep-go`, and `gogrep` and `project` rules. |
 | `all` | Every rule. |
+| `rule-lint` | The 45 rule-quality checks of opengrep-rules (`opengrep-rules.yaml.semgrep.*`), for rule files rather than code; `gogrep lint` runs it. It adds no `gogrep` or `project` rules. |

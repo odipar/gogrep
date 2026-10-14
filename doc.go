@@ -73,10 +73,10 @@
 // Only [Engine.InstallOpengrep] opens network connections, and only when it
 // must download. [Engine.Rules], [Engine.Suites], [Engine.AcceptTests],
 // [Selection.Validate] and [Engine.PruneCache] never run opengrep.
-// [Engine.Scan], [Engine.Test] and [Engine.Command] with a Selection pass
-// --disable-version-check, and Scan and Test remove opengrep's environment
-// variables, so their rules and targets are local files and opengrep checks
-// for no new version. [Engine.Command] without a Selection passes its
+// [Engine.Scan], [Engine.Lint], [Engine.Test] and [Engine.Command] with a
+// Selection pass --disable-version-check, and Scan, Lint and Test remove
+// opengrep's environment variables, so their rules and targets are local
+// files and opengrep checks for no new version. [Engine.Command] without a Selection passes its
 // arguments through unchanged: "scan --config auto" downloads rules.
 //
 // # Rule sets, suites and rule ids
@@ -91,8 +91,10 @@
 //
 // "all" names every set. A [Selection] picks rules from them by suite, by
 // rule id and by field. The built-in suites are code-scanning (the
-// [DefaultSuite]), security-extended, security-and-quality and all; a
-// project adds its own, or replaces a built-in one, in [ProjectSuitesDir].
+// [DefaultSuite]), security-extended, security-and-quality, all, and
+// rule-lint ([LintSuite]), the rule-quality checks that [Engine.Lint] runs on
+// rule files; a project adds its own, or replaces a built-in one, in
+// [ProjectSuitesDir].
 // The suite format is described at
 // https://github.com/odipar/gogrep/blob/main/suites/README.md.
 //
@@ -108,8 +110,9 @@
 // take part in a call. Set NoProjectRules on [ScanOptions], [RulesOptions],
 // [SuitesOptions] and [CommandOptions], per call, for repositories you do
 // not trust; [Engine.Test] always loads them, since testing them is its
-// purpose, so use [TestOptions].ReadOnly for clones. What a repository
-// controls:
+// purpose, so use [TestOptions].ReadOnly for clones, and so does
+// [Engine.Lint], as a project suite may replace [LintSuite]. What a
+// repository controls:
 //
 //   - opengrep/gogrep/rules adds rules that run. opengrep rules are patterns
 //     and run no code, but they can add noise or cost CPU (pattern-regex).
@@ -150,9 +153,9 @@
 // An Engine is safe for concurrent use: create one per process and share it.
 // The built-in rule sets are parsed once per process (about 0.13 s for 2,121
 // rules) and shared read-only; a directory's project rules are parsed per
-// call, so each call sees them as they are at that moment. Scan, Rules,
-// Suites and Command never write into the directory they are given, so
-// scans of one directory may run at once. Test (unless ReadOnly) and
+// call, so each call sees them as they are at that moment. Scan, Lint,
+// Rules, Suites and Command never write into the directory they are given,
+// so scans of one directory may run at once. Test (unless ReadOnly) and
 // AcceptTests write fixture files: do not run two of them on one directory
 // at once. Several Engines and several processes may share one CacheDir.
 //

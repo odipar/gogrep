@@ -115,6 +115,7 @@ $ gogrep suites
 SUITE                    SOURCE    RULES  DESCRIPTION
 all                      built-in  2122   Every bundled, gogrep and project rule
 code-scanning (default)  built-in  555    High-signal security rules (likely vulnerabilities); gogrep's default
+rule-lint                built-in  45     Rule-quality checks for opengrep rule files; gogrep lint runs it
 security-and-quality     built-in  2119   Security plus correctness, best-practice, performance and maintainability rules
 security-extended        built-in  1613   All security rules, including lower-confidence and audit rules
 ```
@@ -461,6 +462,131 @@ Each opengrep process needs up to about 265 MB of memory; on a small runner,
 pass through. That annotation-based runner is still available as
 `gogrep opengrep test --config <dir> <tests>`.
 
+### 6. Lint custom rules
+
+Suite filters select rules by their metadata, so a rule that lacks a field
+a filter asks for, or has a misspelt value, silently drops out of suites
+such as the one in [3. Run a custom suite](#3-run-a-custom-suite).
+`gogrep lint` finds such mistakes, and others, in your rule files. Take a
+rule with no metadata at all:
+
+```yaml
+# opengrep/gogrep/rules/go/no-os-exit.yaml
+rules:
+  - id: no-os-exit
+    languages: [go]
+    severity: WARNING
+    message: Return an error instead of calling os.Exit
+    pattern: os.Exit(...)
+```
+
+Run `gogrep lint` from the project root. It checks every rule file in
+`opengrep/gogrep/rules/`, here this one and the rule from
+[5. Test custom rules](#5-test-custom-rules), but never the rule test
+fixtures under `test/`, whose samples may be YAML:
+
+```console
+$ gogrep lint
+opengrep/gogrep/rules/go/no-os-exit.yaml:2:5: opengrep-rules.yaml.semgrep.metadata-category (INFO): This Semgrep rule is missing a valid 'category' field in the 'metadata'. 'category' must be one of 'security', 'correctness', 'best-practice', 'performance', 'maintainability', or 'portability'.
+opengrep/gogrep/rules/go/no-os-exit.yaml:2:5: opengrep-rules.yaml.semgrep.metadata-technology (INFO): This Semgrep rule is missing a 'technology' field in the 'metadata'. Consider adding a list of technologies based on the rule's associated library or framework, or another piece of relevant information.
+2 problems in 1 of 2 rule files.
+$ echo $?
+1
+```
+
+Each problem is a line `<path>:<line>:<column>: <check> (<severity>): <message>`,
+sorted by path, position and check; the summary goes to stderr. The rule
+from [1. Run one custom rule](#1-run-one-custom-rule), a security rule with
+only `category` and `confidence`, would get four: `metadata-subcategory`,
+`metadata-likelihood`, `metadata-impact` and `metadata-technology`. Give
+`no-os-exit` the two fields it lacks:
+
+```yaml
+    metadata:
+      category: best-practice
+      technology: [go]
+```
+
+```console
+$ gogrep lint
+No problems in 2 rule files.
+```
+
+**Options.** Paths, relative to the current directory, name other rule
+files and directories to lint, e.g. `gogrep lint rules/`; a path among the
+rule test fixtures is an error. `--suite NAME` lints with another suite, and
+`--sarif` writes the problems to stdout as a SARIF log, without the summary.
+`gogrep lint` takes no other flags and passes none to opengrep. Exit codes:
+0 no problems, 1 problems found, 2 usage or setup error, such as no paths
+and no `opengrep/gogrep/rules/`.
+
+**The checks** are the 45 rule-quality rules of opengrep-rules
+(`opengrep-rules.yaml.semgrep.*`), which make up the built-in suite
+`rule-lint`; `gogrep rules --suite rule-lint` lists them. They look for:
+
+- **Metadata:** `category` (security, correctness, best-practice,
+  performance, maintainability or portability) and `technology` on every
+  rule; on a security rule, `subcategory` (vuln, audit or secure default),
+  `confidence`, `likelihood` and `impact` (LOW, MEDIUM or HIGH); `cwe` in
+  the form `CWE-000: Title`, `owasp` in the form `A00:YYYY`, and
+  `references` as a list.
+- **The rule:** a `languages` field that uses semgrep.dev's language names
+  (`go`, not `golang`); a `message` that is present, not empty, on one line
+  and without doubled spaces; ids that are unique in their file;
+  `interfile: true` under `options` rather than `metadata`, and no unknown
+  `options`.
+- **Patterns:** duplicate clauses, a `pattern` and `pattern-not` that cancel
+  out, a `patterns` or `pattern-either` with a single child, a
+  `pattern-either` directly inside another, patterns so general that they
+  are slow (a lone metavariable, `$X.$Y`, a leading `...`), and list items
+  written `-key`, which YAML reads as one string.
+
+**Changing the checks.** A project suite named `rule-lint` replaces the
+built-in one, as for every built-in suite, and `gogrep lint` then runs it.
+It cannot import the suite it replaces, which would be an import cycle, so
+it repeats the built-in's lines and adds its own filters. To drop the
+`technology` check:
+
+```yaml
+# opengrep/gogrep/suites/rule-lint.yaml
+- description: Rule-quality checks, without the technology check
+- rules: bundled
+- include:
+    id: /^opengrep-rules\.yaml\.semgrep\./
+- exclude:
+    id: /\.metadata-technology$/
+```
+
+```console
+$ gogrep suites
+SUITE                    SOURCE    RULES  DESCRIPTION
+...
+rule-lint                project   44     Rule-quality checks, without the technology check
+...
+```
+
+A suite with another name can import `rule-lint` and filter it, for runs
+with `gogrep lint --suite quick-lint`:
+
+```yaml
+# opengrep/gogrep/suites/quick-lint.yaml
+- description: rule-lint without the slow-pattern checks
+- import: rule-lint
+- exclude:
+    id: /\.slow-pattern-/
+```
+
+`rule-lint` is an ordinary suite otherwise: `gogrep scan --suite rule-lint
+opengrep/gogrep/rules` runs the same checks as a plain scan, with
+opengrep's output and options.
+
+**In CI,** run it next to `gogrep test`:
+
+```yaml
+      - name: Lint custom rules
+        run: gogrep lint
+```
+
 ## How gogrep picks rules
 
 - **No rules named:** with no `--config` or `-e`, gogrep runs the selected
@@ -528,9 +654,22 @@ for _, f := range res.Findings {
 ```
 
 `Engine` also lists rules (`Rules`) and suites (`Suites`), runs and accepts
-a repository's rule test fixtures (`Test`, `AcceptTests`), and prunes its
-cache (`PruneCache`). Every method takes an absolute directory, and the ones
-that run opengrep take a `context.Context`.
+a repository's rule test fixtures (`Test`, `AcceptTests`), lints its rules
+(`Lint`), and prunes its cache (`PruneCache`). Every method takes an
+absolute directory, and the ones that run opengrep take a `context.Context`.
+`Lint` is the library's [`gogrep lint`](#6-lint-custom-rules): a `Scan` of
+`opengrep/gogrep/rules`, or of `LintOptions.Paths`, with the `rule-lint`
+suite, whose findings are the problems:
+
+```go
+res, err := eng.Lint(ctx, "/abs/project", nil) // or &gogrep.LintOptions{Paths: []string{"rules"}}
+if err != nil {
+	return err
+}
+for _, f := range res.Findings {
+	fmt.Printf("%s:%d:%d: %s\n", f.Path, f.StartLine, f.StartColumn, f.RuleID)
+}
+```
 
 - **Getting opengrep.** The module contains the rule sets but not the
   opengrep binary. An engine runs `Config.Opengrep`, an opengrep the program
