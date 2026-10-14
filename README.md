@@ -609,7 +609,8 @@ A suite with another name works the same way, for runs with
 
 `rule-lint` is an ordinary suite otherwise: `gogrep scan --suite rule-lint
 opengrep/gogrep/rules` runs the same checks as a plain scan, with
-opengrep's output and options.
+opengrep's output and options, and with its ignores, which `gogrep lint`
+does not apply.
 
 **In CI,** run it next to `gogrep test`:
 
