@@ -205,6 +205,13 @@ rules:
     severity: WARNING
     message: Avoid running $CMD with exec.Command
     pattern: exec.Command($CMD, ...)
+    metadata:
+      category: security
+      subcategory: [audit]
+      confidence: HIGH
+      likelihood: LOW
+      impact: HIGH
+      technology: [go]
 ```
 
 `opengrep/gogrep/rules/test/go/exec-command/rule.ref` names it. Blank lines
