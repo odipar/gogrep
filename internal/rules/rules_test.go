@@ -181,6 +181,10 @@ func TestParseMalformedYAMLAborts(t *testing.T) {
 	if want := "project/go/x.yaml: yaml: "; !strings.HasPrefix(err.Error(), want) {
 		t.Errorf("Parse error = %q, want prefix %q", err, want)
 	}
+	var fe *FileError
+	if !errors.As(err, &fe) || fe.Set != "project" || fe.Path != "go/x.yaml" || fe.Err == nil || err.Error() != "project/go/x.yaml: "+fe.Err.Error() {
+		t.Errorf("Parse error = %#v, want a *FileError for project and go/x.yaml", err)
+	}
 }
 
 func TestParseIgnoresNonRuleYAML(t *testing.T) {

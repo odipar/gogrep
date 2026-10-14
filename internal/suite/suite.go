@@ -203,6 +203,11 @@ type Env struct {
 	Groups map[string][]string               // group name -> set names, e.g. "bundled"
 	Load   func(name string) (*Suite, error) // a suite that the caller names
 	Import func(name string) (*Suite, error) // a suite that an import: entry names
+	// Shadowed, if not nil, returns the suite that a suite named name
+	// overrides (a built-in one under a project suite of the same name). A
+	// suite that imports its own name gets it, so an override can extend
+	// what it replaces instead of importing itself.
+	Shadowed func(name string) (*Suite, error)
 }
 
 // Count returns the number of rules in env.
@@ -255,7 +260,14 @@ func (s *Suite) selectRules(env *Env, stack []string) ([]*rules.Rule, error) {
 				}
 			}
 		case step.imports != "":
-			sub, err := env.Import(step.imports)
+			var sub *Suite
+			var err error
+			if step.imports == s.Name && env.Shadowed != nil {
+				sub, err = env.Shadowed(step.imports)
+			}
+			if sub == nil {
+				sub, err = env.Import(step.imports)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("suite %s: %w", s.Name, err)
 			}

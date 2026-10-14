@@ -101,7 +101,7 @@ func TestLoadEnvSkipsProjectTests(t *testing.T) {
 			"opengrep/gogrep/rules/" + test + "/go/exec-command/live.yaml":   noExecRule,
 			"opengrep/gogrep/rules/" + test + "/live.yaml":                   noExecRule,
 		})
-		env, err := newEngine(t, Config{}).loadEnv(dir, false)
+		env, err := newEngine(t, Config{}).loadEnv(dir, false, false)
 		if err != nil {
 			t.Fatalf("loadEnv: %v", err)
 		}
@@ -115,16 +115,35 @@ func TestLoadEnvSkipsProjectTests(t *testing.T) {
 	}
 }
 
+// A project rule file that does not parse is an error that names it, unless
+// broken files are skipped, which leaves out it alone.
 func TestLoadEnvProjectErrors(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeTree(t, dir, map[string]string{"opengrep/gogrep/rules/go/bad.yaml": "rules: [\n"})
+	writeTree(t, dir, map[string]string{
+		"opengrep/gogrep/rules/go/bad.yaml":             "rules: [\n",
+		"opengrep/gogrep/rules/go/no-exec-command.yaml": noExecRule,
+		"opengrep/gogrep/rules/go/not-rules.yaml":       "a: b\n",
+	})
 	e := newEngine(t, Config{})
-	if _, err := e.loadEnv(dir, false); err == nil || !strings.HasPrefix(err.Error(), "project/go/bad.yaml: yaml: ") {
-		t.Errorf("loadEnv of a broken project rule = %v, want a project/go/bad.yaml error", err)
+	if _, err := e.loadEnv(dir, false, false); err == nil || !strings.HasPrefix(err.Error(), "opengrep/gogrep/rules/go/bad.yaml: yaml: ") {
+		t.Errorf("loadEnv of a broken project rule = %v, want an error that names opengrep/gogrep/rules/go/bad.yaml", err)
 	}
-	if env, err := e.loadEnv(dir, true); err != nil || env.Sets["project"] != nil {
-		t.Errorf("loadEnv without project rules = %v, %v; want an empty project set", env.Sets["project"], err)
+	for _, skip := range []bool{false, true} {
+		if env, err := e.loadEnv(dir, true, skip); err != nil || env.Sets["project"] != nil {
+			t.Errorf("loadEnv without project rules, skipping broken ones %v = %v; want an empty project set", skip, err)
+		}
+	}
+	env, err := e.loadEnv(dir, false, true)
+	if err != nil {
+		t.Fatalf("loadEnv skipping broken project rules: %v", err)
+	}
+	var got []string
+	for _, r := range env.Sets["project"] {
+		got = append(got, r.ID)
+	}
+	if want := []string{"project.go.no-exec-command"}; !slices.Equal(got, want) {
+		t.Errorf("loadEnv skipping broken project rules loaded %q, want %q", got, want)
 	}
 }
 
@@ -136,7 +155,7 @@ func TestSelectionFilter(t *testing.T) {
 		"opengrep/gogrep/rules/go/no-os-exit.yaml":       rule("no-os-exit", "go"),
 		"opengrep/gogrep/rules/generic/todo-marker.yaml": rule("todo-marker", "generic"),
 	})
-	env, err := newEngine(t, Config{}).loadEnv(dir, false)
+	env, err := newEngine(t, Config{}).loadEnv(dir, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

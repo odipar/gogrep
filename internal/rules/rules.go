@@ -8,7 +8,6 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"io/fs"
 	"maps"
@@ -104,7 +103,19 @@ type Rule struct {
 // (category) unless the bare name is one of the others.
 func (r *Rule) Fields() map[string][]string { return r.fields }
 
-// Parse returns the rules of all sets, sorted by ID.
+// A FileError is a rule file that does not parse. Its message names the file
+// by its set and path, as <set>/<path>.
+type FileError struct {
+	Set  string // the rule set
+	Path string // the file's path within the set
+	Err  error
+}
+
+func (e *FileError) Error() string { return e.Set + "/" + e.Path + ": " + e.Err.Error() }
+func (e *FileError) Unwrap() error { return e.Err }
+
+// Parse returns the rules of all sets, sorted by ID, or a *FileError for the
+// first rule file that does not parse.
 func Parse(sets map[string]Set) ([]*Rule, error) {
 	var all []*Rule
 	for _, name := range slices.Sorted(maps.Keys(sets)) {
@@ -116,7 +127,7 @@ func Parse(sets map[string]Set) ([]*Rule, error) {
 			}
 			rules, err := parseFile(name, p, set[p], seen)
 			if err != nil {
-				return nil, fmt.Errorf("%s/%s: %w", name, p, err)
+				return nil, &FileError{Set: name, Path: p, Err: err}
 			}
 			all = append(all, rules...)
 		}

@@ -60,6 +60,11 @@ type ScanOptions struct {
 	// the scan goes on as if it were nil. Result.Stderr and the errors keep
 	// the last 64 KiB of opengrep's stderr either way.
 	Stderr io.Writer
+
+	// skipBrokenProject leaves the project rule files that do not parse out
+	// of the "project" set, rather than failing. Lint sets it: it lints
+	// such files, and opengrep reports them.
+	skipBrokenProject bool
 }
 
 // A Result is what one scan found.
@@ -161,7 +166,7 @@ func (e *Engine) Scan(ctx context.Context, dir string, opts *ScanOptions) (*Resu
 			return nil, fmt.Errorf("scan target %q is not a relative path inside the directory", t)
 		}
 	}
-	own, n, err := e.ruleArgs(dir, opts.Selection, opts.NoProjectRules)
+	own, n, err := e.ruleArgs(dir, opts.Selection, opts.NoProjectRules, opts.skipBrokenProject)
 	if err != nil {
 		return nil, err
 	}
@@ -235,9 +240,10 @@ func (opts *ScanOptions) limits() ([]string, error) {
 }
 
 // ruleArgs returns the arguments that give a scan in dir the rules sel
-// selects, right after "scan", and the number of those rules.
-func (e *Engine) ruleArgs(dir string, sel Selection, noProject bool) ([]string, int, error) {
-	env, err := e.loadEnv(dir, noProject)
+// selects, right after "scan", and the number of those rules. The project
+// rules load as loadEnv loads them.
+func (e *Engine) ruleArgs(dir string, sel Selection, noProject, skipBroken bool) ([]string, int, error) {
+	env, err := e.loadEnv(dir, noProject, skipBroken)
 	if err != nil {
 		return nil, 0, err
 	}

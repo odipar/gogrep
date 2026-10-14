@@ -192,7 +192,7 @@ func discover(dir string, paths []string) ([]*ruletest.Fixture, error) {
 // sel selects: every test that has a rule has its Config. untested is set
 // for the zero Selection: the ids of the project rules that no test tests.
 func (e *Engine) planTests(dir string, fixtures []*ruletest.Fixture, sel Selection) (tests []*ruletest.Test, untested []string, err error) {
-	env, err := e.loadEnv(dir, false)
+	env, err := e.loadEnv(dir, false, false)
 	if err != nil {
 		return nil, nil, err
 	}

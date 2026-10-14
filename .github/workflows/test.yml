@@ -1,7 +1,8 @@
 name: test
 
-# Vets and tests gogrep, then runs the example rule test fixtures with a
-# bundled build, on every OS that gogrep test must give identical results on.
+# Vets and tests gogrep, then runs the example rule test fixtures and lints
+# the example rules and gogrep's own with a bundled build, on every OS that
+# gogrep test must give identical results on.
 # The other jobs run the tests under the race detector, use the library as a
 # module that `go get` fetched, test on Alpine (musl), and report the API
 # changes since the last release.
@@ -111,6 +112,13 @@ jobs:
 
       - name: Run the example rule tests
         run: cd testdata/project && "$RUNNER_TEMP/bin/gogrep" test
+
+      - name: Lint the example rules and gogrep's own
+        # Each exits 1 on a problem. rules/ holds no rule file yet: linting
+        # it guards those added later.
+        run: |
+          (cd testdata/project && "$RUNNER_TEMP/bin/gogrep" lint)
+          "$RUNNER_TEMP/bin/gogrep" lint rules
 
   race:
     # The race detector needs cgo, which Windows runners lack.

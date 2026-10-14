@@ -73,10 +73,10 @@
 // Only [Engine.InstallOpengrep] opens network connections, and only when it
 // must download. [Engine.Rules], [Engine.Suites], [Engine.AcceptTests],
 // [Selection.Validate] and [Engine.PruneCache] never run opengrep.
-// [Engine.Scan], [Engine.Test] and [Engine.Command] with a Selection pass
-// --disable-version-check, and Scan and Test remove opengrep's environment
-// variables, so their rules and targets are local files and opengrep checks
-// for no new version. [Engine.Command] without a Selection passes its
+// [Engine.Scan], [Engine.Lint], [Engine.Test] and [Engine.Command] with a
+// Selection pass --disable-version-check, and Scan, Lint and Test remove
+// opengrep's environment variables, so their rules and targets are local
+// files and opengrep checks for no new version. [Engine.Command] without a Selection passes its
 // arguments through unchanged: "scan --config auto" downloads rules.
 //
 // # Rule sets, suites and rule ids
@@ -91,8 +91,10 @@
 //
 // "all" names every set. A [Selection] picks rules from them by suite, by
 // rule id and by field. The built-in suites are code-scanning (the
-// [DefaultSuite]), security-extended, security-and-quality and all; a
-// project adds its own, or replaces a built-in one, in [ProjectSuitesDir].
+// [DefaultSuite]), security-extended, security-and-quality, all, and
+// rule-lint ([LintSuite]), the rule-quality checks that [Engine.Lint] runs on
+// rule files; a project adds its own, or replaces a built-in one, in
+// [ProjectSuitesDir].
 // The suite format is described at
 // https://github.com/odipar/gogrep/blob/main/suites/README.md.
 //
@@ -108,8 +110,9 @@
 // take part in a call. Set NoProjectRules on [ScanOptions], [RulesOptions],
 // [SuitesOptions] and [CommandOptions], per call, for repositories you do
 // not trust; [Engine.Test] always loads them, since testing them is its
-// purpose, so use [TestOptions].ReadOnly for clones. What a repository
-// controls:
+// purpose, so use [TestOptions].ReadOnly for clones, and so does
+// [Engine.Lint], as a project suite may replace [LintSuite]. What a
+// repository controls:
 //
 //   - opengrep/gogrep/rules adds rules that run. opengrep rules are patterns
 //     and run no code, but they can add noise or cost CPU (pattern-regex).
@@ -120,7 +123,9 @@
 //     a repository can make gogrep read any file outside it as rule YAML,
 //     and parse errors may quote it, or walk any directory tree and read
 //     every regular file in it. gogrep enters no symlinked directory below
-//     the rules directory. NoProjectRules ignores them.
+//     the rules directory. NoProjectRules ignores them. [Engine.Lint]
+//     follows a symlink only to a file inside the directory, and otherwise
+//     fails.
 //   - opengrep/gogrep/suites can replace the default suite with one that
 //     selects nothing. A project suite may be a symlink too, and its
 //     import: entries may name any file, so a repository can make gogrep
@@ -136,7 +141,9 @@
 //     [Result].Findings with Suppressed set; whether they count is the
 //     caller's choice.
 //   - .semgrepignore and .gitignore hide files from a scan, as opengrep
-//     reads them in the scanned directory. This cannot be turned off.
+//     reads them in the scanned directory. This cannot be turned off. They
+//     hide no rule file from [Engine.Lint], which names its files to
+//     opengrep.
 //   - .git/config: opengrep runs git in the scanned directory, and git
 //     honours the repository's configuration. Scan only directories whose
 //     .git your own git clone created; a clone never copies the remote's
@@ -150,9 +157,9 @@
 // An Engine is safe for concurrent use: create one per process and share it.
 // The built-in rule sets are parsed once per process (about 0.13 s for 2,121
 // rules) and shared read-only; a directory's project rules are parsed per
-// call, so each call sees them as they are at that moment. Scan, Rules,
-// Suites and Command never write into the directory they are given, so
-// scans of one directory may run at once. Test (unless ReadOnly) and
+// call, so each call sees them as they are at that moment. Scan, Lint,
+// Rules, Suites and Command never write into the directory they are given,
+// so scans of one directory may run at once. Test (unless ReadOnly) and
 // AcceptTests write fixture files: do not run two of them on one directory
 // at once. Several Engines and several processes may share one CacheDir.
 //

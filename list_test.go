@@ -124,7 +124,7 @@ func TestSuites(t *testing.T) {
 			t.Errorf("built-in suite %s", describe([]Suite{s}))
 		}
 	}
-	if want := []string{"all", "code-scanning", "security-and-quality", "security-extended"}; !slices.Equal(names, want) {
+	if want := []string{"all", "code-scanning", "rule-lint", "security-and-quality", "security-extended"}; !slices.Equal(names, want) {
 		t.Errorf("built-in suites = %q, want %q", names, want)
 	}
 
@@ -136,8 +136,9 @@ func TestSuites(t *testing.T) {
 broken project false -1 suite broken: unknown rule set "nope" "Unknown rule set"
 code-scanning project true 1 <nil> "Only the project's Go rules"
 mine project false 2 <nil> "Mine"
-security-and-quality built-in false ` + fmt.Sprint(builtIn[2].Rules+2) + ` <nil> "` + builtIn[2].Description + `"
-security-extended built-in false ` + fmt.Sprint(builtIn[3].Rules+2) + ` <nil> "` + builtIn[3].Description + `"
+rule-lint built-in false ` + fmt.Sprint(builtIn[2].Rules) + ` <nil> "` + builtIn[2].Description + `"
+security-and-quality built-in false ` + fmt.Sprint(builtIn[3].Rules+2) + ` <nil> "` + builtIn[3].Description + `"
+security-extended built-in false ` + fmt.Sprint(builtIn[4].Rules+2) + ` <nil> "` + builtIn[4].Description + `"
 `
 	if got := describe(suites); got != want {
 		t.Errorf("Suites of a project =\n%s\nwant\n%s", got, want)
@@ -201,6 +202,7 @@ func TestSuiteSpecialFiles(t *testing.T) {
 		"imports-zero project suite imports-zero: suite file /dev/zero is not a regular file",
 		"linked project <nil>",
 		"mine project <nil>",
+		"rule-lint built-in <nil>",
 		"security-and-quality built-in <nil>",
 		"security-extended built-in <nil>",
 	}
@@ -248,4 +250,31 @@ func TestConcurrentCalls(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// A project suite that imports its own name extends the built-in suite it
+// overrides instead of importing itself; without a built-in of that name,
+// the import is still a cycle.
+func TestSuiteExtendsShadowed(t *testing.T) {
+	t.Parallel()
+	e := newEngine(t, Config{})
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		ProjectSuitesDir + "/rule-lint.yaml": "- import: rule-lint\n- exclude:\n    id: /\\.metadata-technology$/\n",
+		ProjectSuitesDir + "/mine.yaml":      "- import: mine\n",
+	})
+	builtIn, err := e.Rules("", &RulesOptions{Selection: Selection{Suites: []string{LintSuite}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.Rules(dir, &RulesOptions{Selection: Selection{Suites: []string{LintSuite}}})
+	if err != nil {
+		t.Fatalf("Rules with the overriding suite: %v", err)
+	}
+	if len(got) != len(builtIn)-1 || slices.ContainsFunc(got, func(r Rule) bool { return strings.HasSuffix(r.ID, ".metadata-technology") }) {
+		t.Errorf("the override selects %d rules, want the %d built-in ones without metadata-technology", len(got), len(builtIn))
+	}
+	if _, err := e.Rules(dir, &RulesOptions{Selection: Selection{Suites: []string{"mine"}}}); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("a suite importing itself with nothing built in: err = %v, want an import cycle", err)
+	}
 }

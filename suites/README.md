@@ -14,6 +14,7 @@ gogrep scan --rule '/sql-injection/' --suite all .    # union of rules and suite
 gogrep scan --suite all --gogrep-lang go .            # narrow any selection
 gogrep suites                            # list suites and their rule counts
 gogrep rules --suite code-scanning       # list the rules a selection picks
+gogrep lint                              # check opengrep/gogrep/rules with rule-lint
 ```
 
 ## Format
@@ -37,7 +38,7 @@ A suite is a YAML list of instructions, applied in order:
 | Instruction | Meaning |
 |---|---|
 | `rules` | Add a rule set: `opengrep-rules`, `0xdea`, `semgrep-go` (pinned in `opengrep.json`), `gogrep` (this repo's `rules/`), `project` (`opengrep/gogrep/rules/` of the scanned directory, which for the gogrep command is the current directory, except `test/` in any letter case), or the groups `bundled` (all pinned sets) and `all`. |
-| `import` | Add the rules another suite selects, by name or path. A path must name a regular file, or a symlink to one. |
+| `import` | Add the rules another suite selects, by name or path. A path must name a regular file, or a symlink to one. A project suite that imports its own name gets the built-in suite it overrides, so it can extend it. |
 | `include` / `exclude` | Filter the rules located so far on their fields. |
 
 **Filter semantics** (as in CodeQL): the first filter that applies to a rule
@@ -67,3 +68,4 @@ Values match case-insensitively. A field with several values (such as
 | `security-extended` | All security rules, including audit and low-confidence ones, plus `gogrep` and `project` rules. |
 | `security-and-quality` | Security, correctness, best-practice, performance, maintainability, portability and compatibility rules, `semgrep-go`, and `gogrep` and `project` rules. |
 | `all` | Every rule. |
+| `rule-lint` | The 45 rule-quality checks of opengrep-rules (`opengrep-rules.yaml.semgrep.*`), for rule files rather than code; `gogrep lint` runs it. It adds no `gogrep` or `project` rules. |

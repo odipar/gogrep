@@ -1,6 +1,7 @@
 package gogrep
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -266,10 +267,11 @@ func parse(sets map[string]rules.Set) (map[string][]*rules.Rule, error) {
 
 // loadEnv returns the rule sets that a call with the project directory dir
 // sees: the bundled ones, gogrep's own and the project's, the last without
-// its test fixtures and empty when dir is "" or noProject is set. Groups:
-// "bundled" (the pinned third-party sets) and "all". Suites load as
+// its test fixtures and empty when dir is "" or noProject is set. A project
+// rule file that does not parse is an error, or, with skipBroken, left out.
+// Groups: "bundled" (the pinned third-party sets) and "all". Suites load as
 // Selection.Suites describes.
-func (e *Engine) loadEnv(dir string, noProject bool) (*suite.Env, error) {
+func (e *Engine) loadEnv(dir string, noProject, skipBroken bool) (*suite.Env, error) {
 	bundled, err := bundledRules()
 	if err != nil {
 		return nil, err
@@ -278,7 +280,7 @@ func (e *Engine) loadEnv(dir string, noProject bool) (*suite.Env, error) {
 	if err != nil {
 		return nil, err
 	}
-	project, err := projectRules(dir, noProject)
+	project, err := projectRules(dir, noProject, skipBroken)
 	if err != nil {
 		return nil, err
 	}
@@ -287,14 +289,23 @@ func (e *Engine) loadEnv(dir string, noProject bool) (*suite.Env, error) {
 		Groups: map[string][]string{"bundled": slices.Collect(maps.Keys(bundled))},
 		Load:   e.loader(dir, noProject, false),
 		Import: e.loader(dir, noProject, true),
+		Shadowed: func(name string) (*suite.Suite, error) {
+			data, err := fs.ReadFile(e.src.suites, name+".yaml")
+			if err != nil {
+				return nil, nil // nothing built in to extend: the import is resolved as usual
+			}
+			return parseSuite("built-in "+name, data)
+		},
 	}
 	maps.Copy(env.Sets, bundled)
 	env.Groups["all"] = slices.Collect(maps.Keys(env.Sets))
 	return env, nil
 }
 
-// projectRules parses the "project" rule set of the project in dir.
-func projectRules(dir string, noProject bool) ([]*rules.Rule, error) {
+// projectRules parses the "project" rule set of the project in dir. A rule
+// file that does not parse is an error that names it by its path in dir,
+// under ProjectRulesDir, or, with skipBroken, left out.
+func projectRules(dir string, noProject, skipBroken bool) ([]*rules.Rule, error) {
 	if dir == "" || noProject {
 		return nil, nil
 	}
@@ -306,7 +317,17 @@ func projectRules(dir string, noProject bool) ([]*rules.Rule, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", rel, err)
 	}
+	if skipBroken {
+		for p, data := range set {
+			if _, err := rules.Parse(map[string]rules.Set{"project": {p: data}}); err != nil {
+				delete(set, p)
+			}
+		}
+	}
 	parsed, err := parse(map[string]rules.Set{"project": set})
+	if fe := (*rules.FileError)(nil); errors.As(err, &fe) {
+		return nil, fmt.Errorf("%s/%s: %w", ProjectRulesDir, fe.Path, fe.Err)
+	}
 	return parsed["project"], err
 }
 

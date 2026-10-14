@@ -9,7 +9,9 @@ set instead.
 Each rule gets the stable id `gogrep.<dir>.<rule id>`. Give rules the usual
 metadata (`category`, `confidence`, `subcategory`, ...) so query suites can
 select them; see [../suites/README.md](../suites/README.md). The built-in
-suites run every `gogrep` rule.
+suites, except `rule-lint`, run every `gogrep` rule. Check the rules here
+with `gogrep lint rules` from the repository root, as CI does; see
+[Lint custom rules](../README.md#6-lint-custom-rules).
 
 `rules/test/`, in any letter case, is reserved for rule test fixtures and never
 loaded as rules. Test the rules here from fixtures under

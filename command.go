@@ -87,7 +87,7 @@ func (e *Engine) Command(ctx context.Context, dir string, opts *CommandOptions, 
 			return nil, errors.New("a command with a Selection must be a scan")
 		}
 		// Right after "scan": after a "--" they would be targets.
-		own, _, err := e.ruleArgs(dir, *opts.Selection, opts.NoProjectRules)
+		own, _, err := e.ruleArgs(dir, *opts.Selection, opts.NoProjectRules, false)
 		if err != nil {
 			return nil, err
 		}

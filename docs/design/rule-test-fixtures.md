@@ -261,7 +261,7 @@ Examples, given the project rules `project.go.no-exec-command`, `project.go.net.
 
 ### 3.3 Load failures
 
-- **gogrep cannot parse a rule YAML file.** This aborts `loadEnv()` for every set, which is existing behaviour shared with `scan`, `rules` and `suites`. `gogrep test` then exits **2** with the existing message, for example `gogrep: project/go/x.yaml: yaml: …`. That is a setup error, not N test failures.
+- **gogrep cannot parse a rule YAML file.** This aborts `loadEnv()` for every set, which is existing behaviour shared with `scan`, `rules` and `suites`. `gogrep test` then exits **2** with a message that names the file by its path, for example `gogrep: opengrep/gogrep/rules/go/x.yaml: yaml: …`. That is a setup error, not N test failures.
 - **gogrep parses the rule but opengrep rejects it.** Examples are a schema error, an unknown language, an invalid pattern, an unknown `options:` key or a `min-version` above the binary's. The fixture fails at `RULE`, showing opengrep's notifications (§6.3).
 
 ## 4. The expected-file format

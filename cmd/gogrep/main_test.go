@@ -385,3 +385,27 @@ func TestRunRulesAndSuites(t *testing.T) {
 		})
 	}
 }
+
+// A project rule file that does not parse stops a scan, a listing and a
+// test run, with an error that names it by its path, but not a lint, which
+// lints it.
+func TestRunBrokenProjectRule(t *testing.T) {
+	useFakeOpengrep(t, 0)
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"opengrep/gogrep/rules/go/no-exec-command.yaml": noExecRule,
+		"opengrep/gogrep/rules/go/bad.yaml":             "rules: [\n",
+		testRoot + "/go/a/rule.ref":                     "no-exec-command\n",
+		testRoot + "/go/a/a.go":                         "package a\n",
+	})
+	t.Chdir(dir)
+	const want = "gogrep: opengrep/gogrep/rules/go/bad.yaml: yaml: line 1: did not find expected node content\n"
+	for _, args := range [][]string{{"rules"}, {"scan", "--sarif", "."}, {"test"}} {
+		if code, stdout, stderr := runGogrep(args...); code != 2 || stdout != "" || stderr != want {
+			t.Errorf("gogrep %q = %d, %q, %q; want 2, no stdout, %q", args, code, stdout, stderr, want)
+		}
+	}
+	if code, stdout, stderr := runGogrep("lint"); code != 0 || stdout != "" || stderr != "No problems in 2 rule files.\n" {
+		t.Errorf("gogrep lint = %d, %q, %q; want 0, no stdout, 2 rule files (from the fake opengrep)", code, stdout, stderr)
+	}
+}
