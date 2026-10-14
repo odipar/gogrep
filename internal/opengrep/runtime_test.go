@@ -108,10 +108,15 @@ func checkPrepared(t *testing.T, dir, sum, xdg string, env []string) {
 		if fi, err := os.Stat(ready + ".ready"); err != nil || !fi.Mode().IsRegular() || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 			t.Errorf("no marker %s.ready of mode 0600: %v", ready, err)
 		}
-		if data, err := os.ReadFile(ready + ".ready"); err != nil || string(data) != string(inPlaceMark(runtime.GOOS, env)) {
-			t.Errorf("the marker holds %q, %v; want %q", data, err, inPlaceMark(runtime.GOOS, env))
+		own := filepath.Join(lookup(env, "XDG_CACHE_HOME"), "opengrep", "v1.30.2")
+		want := string(inPlaceMark(runtime.GOOS, env))
+		if runtime.GOOS != "windows" {
+			want += "RUNTIME=" + own + "\n"
 		}
-		place := filepath.Join(lookup(env, "XDG_CACHE_HOME"), "opengrep", "v1.30.2", "Python")
+		if data, err := os.ReadFile(ready + ".ready"); err != nil || string(data) != want {
+			t.Errorf("the marker holds %q, %v; want %q", data, err, want)
+		}
+		place := filepath.Join(own, "Python")
 		if data, err := os.ReadFile(place); err != nil || string(data) != "runtime" {
 			t.Errorf("the runtime kept in place holds %q, %v; want the unpacked one", data, err)
 		}
@@ -261,6 +266,19 @@ func TestPrepareRuntimeNotASCII(t *testing.T) {
 		t.Errorf("opengrep ran %d times after PrepareRuntime with another XDG_CACHE_HOME; want %d", n, want)
 	}
 	if runtime.GOOS != "windows" {
+		checkPrepared(t, dir, sum, "", other)
+
+		// A marker whose runtime was removed since (a cleaned cache) no
+		// longer counts, so the next first runs are serialised again.
+		if err := os.RemoveAll(filepath.Join(lookup(other, "XDG_CACHE_HOME"), "opengrep")); err != nil {
+			t.Fatal(err)
+		}
+		if xdg, err := PrepareRuntime(context.Background(), exe, sum, dir, other, slog.New(slog.DiscardHandler)); xdg != "" || err != nil {
+			t.Errorf("PrepareRuntime after its runtime was removed = %q, %v; want \"\"", xdg, err)
+		}
+		if n, _ := countRuns(t, runs); n != want+1 {
+			t.Errorf("opengrep ran %d times after its runtime kept in place was removed; want %d", n, want+1)
+		}
 		checkPrepared(t, dir, sum, "", other)
 	}
 }

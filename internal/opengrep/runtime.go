@@ -125,15 +125,28 @@ type place struct {
 }
 
 // ready reports whether the runtime is prepared: its directory is there or,
-// for one kept in place, its marker holds mark. A marker written for
-// another location of opengrep's own runtime does not.
+// for one kept in place, its marker holds mark and the runtime directory it
+// names, if any, is still there. A marker written for another location of
+// opengrep's own runtime does not count, and neither does one whose runtime
+// was removed since (a cleaned ~/.cache), which would let concurrent first
+// runs crash again.
 func (r *place) ready() bool {
 	if !r.inPlace {
-		fi, err := os.Stat(r.path)
-		return err == nil && fi.IsDir()
+		return isDir(r.path)
 	}
 	data, err := os.ReadFile(r.path)
-	return err == nil && bytes.Equal(data, r.mark)
+	rest, ok := bytes.CutPrefix(data, r.mark)
+	if err != nil || !ok {
+		return false
+	}
+	dir, ok := bytes.CutPrefix(rest, []byte("RUNTIME="))
+	dir = bytes.TrimSuffix(dir, []byte("\n"))
+	return len(rest) == 0 || ok && (len(dir) == 0 || isDir(string(dir)))
+}
+
+func isDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
 }
 
 // xdgCache returns the XDG_CACHE_HOME for the prepared runtime: "" for one
@@ -230,7 +243,7 @@ func unpack(ctx context.Context, exe, dir, dst string, env []string) error {
 	}
 	defer os.RemoveAll(tmp)
 	log := filepath.Join(tmp, "log")
-	if err := runVersion(ctx, exe, append(slices.Clip(env), "XDG_CACHE_HOME="+tmp, "SEMGREP_LOG_FILE="+log)); err != nil {
+	if _, err := runVersion(ctx, exe, append(slices.Clip(env), "XDG_CACHE_HOME="+tmp, "SEMGREP_LOG_FILE="+log)); err != nil {
 		return err
 	}
 	if err := os.Remove(log); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -243,36 +256,65 @@ func unpack(ctx context.Context, exe, dir, dst string, env []string) error {
 }
 
 // prepareInPlace runs exe --version, which unpacks its runtime where
-// opengrep keeps it, and then writes the marker of r in dir.
+// opengrep keeps it, and then writes the marker of r in dir: its mark and,
+// on Linux and macOS, RUNTIME= the directory the runtime was unpacked in.
 func prepareInPlace(ctx context.Context, exe, dir string, r *place, env []string) error {
 	log, err := LogFile(dir)
 	if err != nil {
 		return err
 	}
 	defer os.Remove(log)
-	if err := runVersion(ctx, exe, append(slices.Clip(env), "SEMGREP_LOG_FILE="+log)); err != nil {
+	version, err := runVersion(ctx, exe, append(slices.Clip(env), "SEMGREP_LOG_FILE="+log))
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(r.path, r.mark, 0o600)
+	mark := r.mark
+	if runtime.GOOS != "windows" {
+		mark = fmt.Appendf(slices.Clip(mark), "RUNTIME=%s\n", ownRuntime(env, version))
+	}
+	return os.WriteFile(r.path, mark, 0o600)
 }
 
-// runVersion runs exe --version in env, within prepareTimeout, and checks
-// that it printed a version.
-func runVersion(ctx context.Context, exe string, env []string) error {
+// ownRuntime returns the directory where opengrep, run in env, keeps the
+// runtime of version by itself on Linux and macOS:
+// $XDG_CACHE_HOME/opengrep/v<version>, or else $HOME/.cache/... . It falls
+// back to its parent opengrep directory, or "" when neither is there.
+func ownRuntime(env []string, version string) string {
+	base := lookup(env, "XDG_CACHE_HOME")
+	if base == "" {
+		if home := lookup(env, "HOME"); home != "" {
+			base = filepath.Join(home, ".cache")
+		}
+	}
+	if base == "" {
+		return ""
+	}
+	for _, dir := range []string{filepath.Join(base, "opengrep", "v"+version), filepath.Join(base, "opengrep")} {
+		if isDir(dir) {
+			return dir
+		}
+	}
+	return ""
+}
+
+// runVersion runs exe --version in env, within prepareTimeout, and returns
+// the version it printed.
+func runVersion(ctx context.Context, exe string, env []string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, prepareTimeout)
 	defer cancel()
 	var stdout, stderr bytes.Buffer
 	c := &Cmd{Path: exe, Args: []string{"--version"}, Env: env, Stdout: &stdout, Stderr: &stderr}
 	if err := c.Run(ctx); err != nil {
 		if line := lastLine(stderr.Bytes()); line != "" {
-			return fmt.Errorf("%s --version: %w: %s", exe, err, line)
+			return "", fmt.Errorf("%s --version: %w: %s", exe, err, line)
 		}
-		return fmt.Errorf("%s --version: %w", exe, err)
+		return "", fmt.Errorf("%s --version: %w", exe, err)
 	}
-	if len(bytes.TrimSpace(stdout.Bytes())) == 0 {
-		return fmt.Errorf("%s --version exited 0 but printed no version", exe)
+	version := lastLine(stdout.Bytes())
+	if version == "" {
+		return "", fmt.Errorf("%s --version exited 0 but printed no version", exe)
 	}
-	return nil
+	return version, nil
 }
 
 // ascii reports whether s is ASCII.

@@ -1368,7 +1368,7 @@ A cancelled preparation returns the ctx error.
 **Windows, and a `CacheDir` that is not ASCII.**
 
 - The location cannot be redirected (on Windows) or must not be (under a `CacheDir` that is not ASCII), so a marker `<CacheDir>/runtime-<k>.ready` is used instead.
-- If it exists and holds what it should, the runtime is ready (one small read). On Windows it is empty; on Linux and macOS it holds `XDG_CACHE_HOME=…` and `HOME=…` from `Env`.
+- If it exists and holds what it should, the runtime is ready (one small read, plus a `stat`). On Windows it is empty; on Linux and macOS it holds `XDG_CACHE_HOME=…` and `HOME=…` from `Env`, and `RUNTIME=` the directory opengrep unpacked into (`$XDG_CACHE_HOME/opengrep/v<version>`, or `$HOME/.cache/…`). A marker whose `RUNTIME` directory is gone (a cleaned `~/.cache`) does not count, so the next first runs are serialised again instead of crashing.
 - Otherwise, under the same mutex and lock, gogrep runs `<exe> --version` alone, which unpacks in place, then writes the marker. Other goroutines and gogrep processes wait on the mutex and the lock.
 - **Limits, documented:**
   - Windows behaviour is unverified; a CI step checks it (§7.5).

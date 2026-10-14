@@ -105,7 +105,8 @@ type Config struct {
 	// then be ASCII, and, as on Windows, has one opengrep unpack it there
 	// alone, across goroutines and processes, so that concurrent first runs
 	// do not crash; runtime-<sha16>.ready in CacheDir then records for which
-	// XDG_CACHE_HOME and HOME that was done.
+	// XDG_CACHE_HOME and HOME that was done, and in which directory, so that a
+	// runtime removed since (a cleaned ~/.cache) is prepared again.
 	CacheDir string
 
 	// Env is the environment opengrep runs in, as in exec.Cmd.Env. nil
