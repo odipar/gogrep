@@ -386,8 +386,9 @@ func TestRunRulesAndSuites(t *testing.T) {
 	}
 }
 
-// A project rule file that does not parse stops a scan and a listing, with
-// an error that names it by its path.
+// A project rule file that does not parse stops a scan, a listing and a
+// test run, with an error that names it by its path, but not a lint, which
+// lints it.
 func TestRunBrokenProjectRule(t *testing.T) {
 	useFakeOpengrep(t, 0)
 	dir := t.TempDir()
@@ -403,5 +404,8 @@ func TestRunBrokenProjectRule(t *testing.T) {
 		if code, stdout, stderr := runGogrep(args...); code != 2 || stdout != "" || stderr != want {
 			t.Errorf("gogrep %q = %d, %q, %q; want 2, no stdout, %q", args, code, stdout, stderr, want)
 		}
+	}
+	if code, stdout, stderr := runGogrep("lint"); code != 0 || stdout != "" || stderr != "No problems in 2 rule files.\n" {
+		t.Errorf("gogrep lint = %d, %q, %q; want 0, no stdout, 2 rule files (from the fake opengrep)", code, stdout, stderr)
 	}
 }

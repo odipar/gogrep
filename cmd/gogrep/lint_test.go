@@ -420,10 +420,22 @@ func TestLintRules(t *testing.T) {
 		t.Errorf("gogrep lint of the example rules = %d, %q, %q; want 0, no stdout, %q", code, stdout, stderr, "No problems in 2 rule files.\n")
 	}
 
-	// A rule file that opengrep cannot parse is a problem.
-	writeTree(t, ".", map[string]string{"other/broken.yaml": "rules:\n  - id: broken\n    pattern: [unclosed\n"})
+	// A rule file that opengrep cannot parse is a problem, also among the
+	// project rules, where it stops no lint.
+	const broken = "rules:\n  - id: broken\n    pattern: [unclosed\n"
+	writeTree(t, ".", map[string]string{"other/broken.yaml": broken})
 	code, stdout, stderr = runGogrep("lint", "other")
 	if want := "other/broken.yaml:3:1: syntax-error (ERROR): "; code != 1 || !strings.HasPrefix(stdout, want) || strings.Count(stdout, "\n") != 1 || stderr != "1 problem in 1 of 1 rule file.\n" {
 		t.Errorf("gogrep lint of a broken rule file = %d, %q, %q; want 1, a problem %q..., %q", code, stdout, stderr, want, "1 problem in 1 of 1 rule file.\n")
+	}
+	writeTree(t, ".", map[string]string{"opengrep/gogrep/rules/go/broken.yaml": broken})
+	code, stdout, stderr = runGogrep("lint")
+	lines = strings.Split(stdout, "\n")
+	if want := "opengrep/gogrep/rules/go/broken.yaml:3:1: syntax-error (ERROR): "; code != 1 || len(lines) != 4 || !strings.HasPrefix(lines[2], want) || stderr != "3 problems in 2 of 5 rule files.\n" {
+		t.Errorf("gogrep lint with a broken project rule = %d, stdout\n%s\nstderr %q; want 1, a problem %q... and the bare rule's, %q", code, stdout, stderr, want, "3 problems in 2 of 5 rule files.\n")
+	}
+	code, stdout, stderr = runGogrep("lint", "opengrep/gogrep/rules/go/no-exec-command.yaml")
+	if code != 0 || stdout != "" || stderr != "No problems in 1 rule file.\n" {
+		t.Errorf("gogrep lint of a rule next to a broken one = %d, %q, %q; want 0, no stdout, %q", code, stdout, stderr, "No problems in 1 rule file.\n")
 	}
 }

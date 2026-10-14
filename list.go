@@ -35,7 +35,7 @@ func (e *Engine) Rules(dir string, opts *RulesOptions) ([]Rule, error) {
 	if err := checkDir(dir, true); err != nil {
 		return nil, err
 	}
-	env, err := e.loadEnv(dir, opts.NoProjectRules)
+	env, err := e.loadEnv(dir, opts.NoProjectRules, false)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func (e *Engine) Suites(dir string, opts *SuitesOptions) ([]Suite, error) {
 			}
 		}
 	}
-	env, err := e.loadEnv(dir, opts.NoProjectRules)
+	env, err := e.loadEnv(dir, opts.NoProjectRules, false)
 	if err != nil {
 		return nil, err
 	}

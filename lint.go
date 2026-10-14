@@ -78,7 +78,9 @@ type LintResult struct {
 //
 // A rule file that opengrep cannot parse has no findings: it appears in
 // Result.Diagnostics, as a syntax error ("Other syntax error at line
-// <file>:<line>: ..."). gogrep lint counts that as a problem.
+// <file>:<line>: ..."). gogrep lint counts that as a problem. Unlike Scan,
+// Lint is not stopped by a project rule file that does not parse: it leaves
+// the file out of the project rules, and lints it.
 //
 // Errors are Scan's, plus plain errors for a path that is not a relative
 // path inside dir, does not exist, lies in ProjectTestsDir or is a file but
@@ -123,7 +125,7 @@ func (e *Engine) Lint(ctx context.Context, dir string, opts *LintOptions) (*Lint
 
 	sel := Selection{Suites: []string{cmp.Or(opts.Suite, LintSuite)}}
 	if len(files) == 0 {
-		env, err := e.loadEnv(dir, false)
+		env, err := e.loadEnv(dir, false, true)
 		if err != nil {
 			return nil, err
 		}
@@ -137,7 +139,7 @@ func (e *Engine) Lint(ctx context.Context, dir string, opts *LintOptions) (*Lint
 		}
 		return &LintResult{Result: res}, nil
 	}
-	res, err := e.Scan(ctx, dir, &ScanOptions{Selection: sel, Targets: targets, Stderr: opts.Stderr})
+	res, err := e.Scan(ctx, dir, &ScanOptions{Selection: sel, Targets: targets, Stderr: opts.Stderr, skipBrokenProject: true})
 	if err != nil {
 		return nil, err
 	}

@@ -534,6 +534,10 @@ $ echo $?
 1
 ```
 
+In `opengrep/gogrep/rules/` such a file stops `gogrep scan` and
+`gogrep test`, with an error that names it, but not `gogrep lint`, which
+reports it the same way and lints the other rule files.
+
 **Rule files** are the `.yaml` and `.yml` files below the paths, also
 those that `.semgrepignore`, `.gitignore` or opengrep's default ignores
 (such as `tests/` and `vendor/`) hide from a scan: `gogrep lint` names each

@@ -429,6 +429,42 @@ func TestLintNoFiles(t *testing.T) {
 	}
 }
 
+// A project rule file that does not parse stops a Scan, but not a Lint,
+// which lints it, and lints another file without it.
+func TestLintBrokenProjectRule(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	e := newFakeEngine(t)
+	dir := t.TempDir()
+	broken, valid := ProjectRulesDir+"/go/broken.yaml", ProjectRulesDir+"/go/no-exec-command.yaml"
+	writeTree(t, dir, map[string]string{broken: "rules: [\n", valid: noExecRule, ProjectSuitesDir + "/rule-lint.yaml": twoChecks, "docs/README.md": "Docs\n"})
+	want := "opengrep/gogrep/rules/go/broken.yaml: yaml: "
+	if _, err := e.Scan(ctx, dir, &ScanOptions{Selection: Selection{Suites: []string{LintSuite}}}); err == nil || !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("Scan with a broken project rule = %v, want an error %q...", err, want)
+	}
+	if _, err := e.Rules(dir, nil); err == nil || !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("Rules with a broken project rule = %v, want an error %q...", err, want)
+	}
+	for _, tt := range []struct {
+		opts  *LintOptions
+		files []string
+	}{
+		{nil, []string{broken, valid}},
+		{&LintOptions{Paths: []string{valid}}, []string{valid}},
+		{&LintOptions{Paths: []string{valid}, Suite: "all"}, []string{valid}},
+	} {
+		res, err := e.Lint(ctx, dir, tt.opts)
+		if err != nil {
+			t.Errorf("Lint(%+v) with a broken project rule: %v", tt.opts, err)
+			continue
+		}
+		checkFiles(t, res, tt.files)
+	}
+	if res, err := e.Lint(ctx, dir, &LintOptions{Paths: []string{"docs"}}); err != nil || res.Rules != 2 || res.Files != nil {
+		t.Errorf("Lint without rule files, with a broken project rule = %v, %v; want the 2 rules of the project's suite", res, err)
+	}
+}
+
 // The directory is checked as Scan checks it; a path that is not relative
 // and inside it, does not exist or is a file but not a rule file is
 // refused, before opengrep is looked for.
@@ -723,6 +759,30 @@ func TestLintOpengrep(t *testing.T) {
 		}
 		if !ok {
 			t.Errorf("Lint of a broken rule file = %+v, %+v, complete %v; want the bare rule's findings and one syntax error at line other/broken.yaml:3", res.Findings, res.Diagnostics, res.Complete)
+		}
+	})
+
+	// A broken project rule file does not stop the lint, which reports it
+	// as a syntax error and lints the others.
+	t.Run("broken project rule", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		broken, bare := ProjectRulesDir+"/go/broken.yaml", ProjectRulesDir+"/go/bare.yaml"
+		writeTree(t, dir, map[string]string{broken: "rules:\n  - id: broken\n    pattern: [unclosed\n", bare: rule("bare", "go")})
+		res, err := e.Lint(ctx, dir, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ok := len(res.Diagnostics) == 1 && ruleIDs(res.Result, broken) == nil && len(ruleIDs(res.Result, bare)) == 2
+		for _, d := range res.Diagnostics {
+			ok = ok && d.ID == "Other syntax error" && strings.Contains(filepath.ToSlash(d.Message), " at line "+broken+":3:")
+		}
+		if !ok {
+			t.Errorf("Lint with a broken project rule = %+v, %+v; want the bare rule's findings and a syntax error at line %s:3", res.Findings, res.Diagnostics, broken)
+		}
+		res, err = e.Lint(ctx, dir, &LintOptions{Paths: []string{bare}})
+		if err != nil || len(res.Diagnostics) != 0 || len(res.Findings) != 2 {
+			t.Errorf("Lint of %s next to a broken project rule = %v, %v; want its findings alone", bare, res, err)
 		}
 	})
 
