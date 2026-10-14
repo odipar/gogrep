@@ -18,6 +18,7 @@ func lines(from, to int) []string {
 }
 
 func TestDiff(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name             string
 		expected, actual []string
@@ -89,6 +90,7 @@ func TestDiff(t *testing.T) {
 // TestScriptShortest checks on random inputs that the edit script turns a
 // into b and keeps a longest common subsequence.
 func TestScriptShortest(t *testing.T) {
+	t.Parallel()
 	rnd := rand.New(rand.NewPCG(1, 2))
 	random := func() []string {
 		s := make([]string, rnd.IntN(13))
@@ -136,6 +138,7 @@ func lcs(a, b []string) int {
 }
 
 func TestDiffLarge(t *testing.T) {
+	t.Parallel()
 	a := strings.Split(strings.Repeat("a\n", 3000)+strings.Repeat("b\n", 3000), "\n")
 	b := strings.Split(strings.Repeat("c\n", 3000)+strings.Repeat("b\n", 3000), "\n")
 	got := Diff(a, b)

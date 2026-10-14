@@ -23,7 +23,7 @@ jobs:
       - name: Build gogrep with the pinned opengrep
         run: |
           go run ./tools/fetch-opengrep
-          go build -tags bundled -o "$RUNNER_TEMP/bin/gogrep" .
+          go build -tags gogrep_bundled -o "$RUNNER_TEMP/bin/gogrep" ./cmd/gogrep
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Scan

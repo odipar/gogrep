@@ -7,6 +7,7 @@ import (
 )
 
 func TestParseRef(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name, data, want, err string
 	}{
@@ -40,6 +41,7 @@ func TestParseRef(t *testing.T) {
 }
 
 func TestResolve(t *testing.T) {
+	t.Parallel()
 	project := ruleSet("project", "project.go.no-exec-command", "project.go.net.dial", "project.net.dial", "project.gogrep.x")
 	all := append(ruleSet("gogrep", "gogrep.go.y", "gogrep.x"), project...)
 	all = append(all, ruleSet("opengrep-rules", "opengrep-rules.go.lang.security.audit.dangerous-exec-command")...)
@@ -71,10 +73,10 @@ func TestResolve(t *testing.T) {
 			`rule reference "No-Exec-Command" matches no rule; did you mean project.go.no-exec-command?; list candidates with: gogrep rules --rule '/No-Exec-Command/'`},
 		{"five suggestions, sorted", "dial", "go", append(many, all...), "",
 			`rule reference "dial" matches no rule; did you mean project.a.Dial, project.b.dial, project.c.dial, project.d.dial, project.e.dial?; list candidates with: gogrep rules --rule '/dial/'`},
-		{"no bundled rule sets", "no-exec-command", "misc", project, "",
-			`rule reference "no-exec-command" matches no rule; did you mean project.go.no-exec-command?; list candidates with: gogrep rules --rule '/no-exec-command/'; this gogrep build has no bundled rule sets`},
+		{"project rules only", "no-exec-command", "misc", project, "",
+			`rule reference "no-exec-command" matches no rule; did you mean project.go.no-exec-command?; list candidates with: gogrep rules --rule '/no-exec-command/'`},
 		{"no rules", "x", "go", nil, "",
-			`rule reference "x" matches no rule; list candidates with: gogrep rules --rule '/x/'; this gogrep build has no bundled rule sets`},
+			`rule reference "x" matches no rule; list candidates with: gogrep rules --rule '/x/'`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

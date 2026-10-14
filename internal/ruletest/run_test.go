@@ -1,10 +1,11 @@
 package ruletest
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -56,11 +57,41 @@ func newFakeRunner() *fakeRunner {
 	return r
 }
 
-// run runs tests and returns the exit code and output.
-func (r *fakeRunner) run(ctx context.Context, tests []*Test) (code int, stdout, stderr string) {
-	var out, errb bytes.Buffer
-	code = r.Run(ctx, tests, &out, &errb)
-	return code, out.String(), errb.String()
+// run runs tests and returns their verdicts, checking that Run reported
+// each of them, in order.
+func (r *fakeRunner) run(t *testing.T, tests []*Test) ([]*Verdict, error) {
+	t.Helper()
+	var reported []*Verdict
+	vs, err := r.Run(context.Background(), tests, func(v *Verdict) { reported = append(reported, v) })
+	if !slices.Equal(reported, vs) {
+		t.Errorf("Run reported %d verdicts, and returned %d others", len(reported), len(vs))
+	}
+	return vs, err
+}
+
+// describe returns verdicts as text: for each, a status line with the
+// test's name, "missing expected.txt" when the fixture has none, the diff,
+// and the details, indented.
+func describe(vs []*Verdict) string {
+	var b strings.Builder
+	for _, v := range vs {
+		status := "PASSED"
+		switch {
+		case v.Learned:
+			status = "LEARNED"
+		case v.Stage != "":
+			status = "FAILED(" + string(v.Stage) + ")"
+		}
+		fmt.Fprintf(&b, "%s %s\n", status, v.Name)
+		if v.Missing {
+			b.WriteString("missing expected.txt\n")
+		}
+		b.WriteString(v.Diff)
+		for _, l := range v.Details {
+			fmt.Fprintf(&b, "  %s\n", l)
+		}
+	}
+	return b.String()
 }
 
 // fixtureSpec describes a fixture for addTest.
@@ -120,41 +151,47 @@ func (r *fakeRunner) addTests(t *testing.T) []*Test {
 	}
 }
 
-// The report of the tests from addTests.
-const testsReport = `Executing 8 tests.
-[1/8] PASSED test/a-pass
-[2/8] FAILED(RESULT) test/b-diff
+// The verdicts of the tests from addTests.
+const testsVerdicts = `PASSED test/a-pass
+FAILED(RESULT) test/b-diff
 --- expected
 +++ actual
 @@ -1,1 +1,1 @@
 -| a.go:1:1:1:2 | old |
 +| a.go:1:1:1:2 | new |
-[3/8] FAILED(RESULT) test/c-missing
-Cannot find expected.txt.
+FAILED(RESULT) test/c-missing
+missing expected.txt
 --- expected
 +++ actual
 @@ -0,0 +1,1 @@
 +| a.go:1:1:1:2 | m |
-[4/8] FAILED(SETUP) test/d-setup
+FAILED(SETUP) test/d-setup
   no code samples
-[5/8] FAILED(RULE) test/e-rule
+FAILED(RULE) test/e-rule
   rule reference "x" matches no rule
-[6/8] FAILED(RULE) test/f-invalid
+FAILED(RULE) test/f-invalid
   InvalidRuleSchemaError: One of these properties is missing: 'message'
   SemgrepError: invalid configuration file found (1 configs were invalid)
-[7/8] FAILED(RUN) test/g-run
+FAILED(RUN) test/g-run
   SemgrepError: File not found: missing.go
   opengrep exited with code 2
   > oops
-[8/8] PASSED test/h-empty
-2 tests passed; 6 tests failed:
-  FAILED: test/b-diff
-  FAILED: test/c-missing
-  FAILED: test/d-setup
-  FAILED: test/e-rule
-  FAILED: test/f-invalid
-  FAILED: test/g-run
+PASSED test/h-empty
 `
+
+// checkVerdicts checks that vs, err are the verdicts of the tests from
+// addTests, without file errors.
+func checkVerdicts(t *testing.T, vs []*Verdict, err error) {
+	t.Helper()
+	if got := describe(vs); err != nil || got != testsVerdicts {
+		t.Errorf("Run = %v, verdicts\n%s\nwant no error, verdicts\n%s", err, got, testsVerdicts)
+	}
+	for _, v := range vs {
+		if len(v.FileErrors) > 0 {
+			t.Errorf("%s: file errors %q", v.Name, v.FileErrors)
+		}
+	}
+}
 
 // checkFile checks that the file name in the fixture of test holds want, and
 // that only its owner can read and write it; want "-" means it must not
@@ -189,20 +226,28 @@ func checkNoTemp(t *testing.T, tests []*Test) {
 }
 
 func TestRun(t *testing.T) {
+	t.Parallel()
 	r := newFakeRunner()
 	tests := r.addTests(t)
-	code, stdout, stderr := r.run(context.Background(), tests)
-	if code != 1 || stdout != testsReport || stderr != "" {
-		t.Errorf("Run = %d, stderr %q, stdout\n%s\nwant 1, no stderr, stdout\n%s", code, stderr, stdout, testsReport)
+	vs, err := r.run(t, tests)
+	checkVerdicts(t, vs, err)
+	if len(vs) != len(tests) {
+		t.Fatalf("Run = %d verdicts, want %d", len(vs), len(tests))
 	}
 
+	// Verdicts hold the command line of each test that ran opengrep, and
+	// its stderr.
 	sep := string(filepath.Separator)
 	want := []string{testBin, "scan", "--config", testConfig, "--no-rewrite-rule-ids", "--sarif", "--disable-version-check", "--timeout", "0", "-j", "1", "--", "." + sep + "a.go"}
-	for _, test := range tests {
-		if args, ran := r.calls[test.Dir]; test.Rule == nil && ran {
-			t.Errorf("%s ran opengrep, want not", test.Name)
-		} else if test.Rule != nil && !slices.Equal(args, want) {
-			t.Errorf("%s ran opengrep with %q, want %q", test.Name, args, want)
+	for i, test := range tests {
+		args, ran := r.calls[test.Dir]
+		switch v := vs[i]; {
+		case test.Rule == nil && (ran || v.Command != nil || v.Stderr != nil):
+			t.Errorf("%s ran opengrep (%v), command %q, stderr %q; want none", test.Name, ran, v.Command, v.Stderr)
+		case test.Rule != nil && (!slices.Equal(args, want) || !slices.Equal(v.Command, want)):
+			t.Errorf("%s ran opengrep with %q, command %q; want %q", test.Name, args, v.Command, want)
+		case test.Rule != nil && string(v.Stderr) != string(r.fakes[test.Dir].out.Stderr):
+			t.Errorf("%s: stderr %q, want %q", test.Name, v.Stderr, r.fakes[test.Dir].out.Stderr)
 		}
 	}
 
@@ -220,15 +265,15 @@ func TestRun(t *testing.T) {
 // The report does not depend on the number of opengrep processes, nor on
 // the order in which they finish.
 func TestRunOrder(t *testing.T) {
+	t.Parallel()
 	for _, threads := range []int{1, 3, 8} {
 		r := newFakeRunner()
 		r.Threads = threads
 		tests := r.addTests(t)
 		if threads >= len(tests) {
-			// After the first run, which runs alone, each waits until every
-			// later one has finished.
+			// Each run waits until every later one has finished.
 			var ran []*Test
-			for _, test := range tests[1:] {
+			for _, test := range tests {
 				if test.Rule != nil {
 					ran = append(ran, test)
 				}
@@ -246,55 +291,33 @@ func TestRunOrder(t *testing.T) {
 				}
 			}
 		}
-		code, stdout, stderr := r.run(context.Background(), tests)
-		if code != 1 || stdout != testsReport || stderr != "" {
-			t.Errorf("Run with %d threads = %d, stderr %q, stdout\n%s\nwant 1, no stderr, stdout\n%s", threads, code, stderr, stdout, testsReport)
-		}
-	}
-}
-
-// The first opengrep run, which may unpack opengrep, runs alone.
-func TestRunFirstAlone(t *testing.T) {
-	r := newFakeRunner()
-	r.Threads = 8
-	tests := r.addTests(t)
-	var others int
-	r.fakes[tests[0].Dir].before = func(context.Context) {
-		time.Sleep(50 * time.Millisecond) // time enough for other runs to start
-		r.mu.Lock()
-		others = len(r.calls) - 1
-		r.mu.Unlock()
-	}
-	if code, stdout, _ := r.run(context.Background(), tests); code != 1 || stdout != testsReport {
-		t.Errorf("Run = %d, stdout\n%s\nwant 1, stdout\n%s", code, stdout, testsReport)
-	}
-	if others != 0 {
-		t.Errorf("%d other opengrep runs started during the first", others)
+		vs, err := r.run(t, tests)
+		checkVerdicts(t, vs, err)
 	}
 }
 
 func TestRunLearn(t *testing.T) {
+	t.Parallel()
 	r := newFakeRunner()
 	r.Learn = true
 	tests := r.addTests(t)[:3]
 	writeTree(t, tests[1].Dir, map[string]string{"actual.txt": "stale\n"})
-	const want = `Executing 3 tests.
-[1/3] PASSED test/a-pass
-[2/3] LEARNED test/b-diff
+	const want = `PASSED test/a-pass
+LEARNED test/b-diff
 --- expected
 +++ actual
 @@ -1,1 +1,1 @@
 -| a.go:1:1:1:2 | old |
 +| a.go:1:1:1:2 | new |
-[3/3] LEARNED test/c-missing
+LEARNED test/c-missing
+missing expected.txt
 --- expected
 +++ actual
 @@ -0,0 +1,1 @@
 +| a.go:1:1:1:2 | m |
-All 3 tests passed (2 learned).
 `
-	if code, stdout, stderr := r.run(context.Background(), tests); code != 0 || stdout != want || stderr != "" {
-		t.Errorf("Run --learn = %d, stderr %q, stdout\n%s\nwant 0, no stderr, stdout\n%s", code, stderr, stdout, want)
+	if vs, err := r.run(t, tests); err != nil || describe(vs) != want {
+		t.Errorf("Run --learn = %v, verdicts\n%s\nwant no error, verdicts\n%s", err, describe(vs), want)
 	}
 	checkFile(t, tests[1], expectedFile, "| a.go:1:1:1:2 | new |\n")
 	checkFile(t, tests[2], expectedFile, "| a.go:1:1:1:2 | m |\n")
@@ -304,24 +327,19 @@ All 3 tests passed (2 learned).
 	checkNoTemp(t, tests)
 
 	r.Learn = false
-	const again = `Executing 3 tests.
-[1/3] PASSED test/a-pass
-[2/3] PASSED test/b-diff
-[3/3] PASSED test/c-missing
-All 3 tests passed.
-`
-	if code, stdout, stderr := r.run(context.Background(), tests); code != 0 || stdout != again || stderr != "" {
-		t.Errorf("Run after --learn = %d, stderr %q, stdout\n%s\nwant 0, no stderr, stdout\n%s", code, stderr, stdout, again)
+	const again = "PASSED test/a-pass\nPASSED test/b-diff\nPASSED test/c-missing\n"
+	if vs, err := r.run(t, tests); err != nil || describe(vs) != again {
+		t.Errorf("Run after --learn = %v, verdicts\n%s\nwant no error, verdicts\n%s", err, describe(vs), again)
 	}
 }
 
 func TestRunKeepSARIF(t *testing.T) {
+	t.Parallel()
 	r := newFakeRunner()
 	r.KeepSARIF = true
 	tests := r.addTests(t)
-	if code, stdout, _ := r.run(context.Background(), tests); code != 1 || stdout != testsReport {
-		t.Errorf("Run --keep-sarif = %d, stdout\n%s\nwant 1, stdout\n%s", code, stdout, testsReport)
-	}
+	vs, err := r.run(t, tests)
+	checkVerdicts(t, vs, err)
 	for _, test := range tests {
 		want := "-"
 		if test.Rule != nil {
@@ -332,36 +350,67 @@ func TestRunKeepSARIF(t *testing.T) {
 	checkNoTemp(t, tests)
 }
 
-func TestRunShowOutput(t *testing.T) {
-	r := newFakeRunner()
-	r.Bin, r.ShowOutput = "/opt/open grep/opengrep", true
-	dir := filepath.Join(t.TempDir(), "it's")
-	out := results("m")
-	out.Stderr = []byte("\n  \nScanning 1 file.\n\nRan 1 rule.  \n\n")
-	tests := []*Test{
-		r.addTest(t, dir, "a", fixtureSpec{files: map[string]string{"expected.txt": "| a.go:1:1:1:2 | m |\n"}, out: out}),
-		r.addTest(t, dir, "b", fixtureSpec{setup: errors.New("no code samples")}),
+// A read-only run reports what any run would, and writes and removes no
+// file in the fixtures, even when told to learn and keep SARIF.
+func TestRunReadOnly(t *testing.T) {
+	t.Parallel()
+	for _, learn := range []bool{false, true} {
+		r := newFakeRunner()
+		r.ReadOnly, r.Learn, r.KeepSARIF = true, learn, learn
+		tests := r.addTests(t)
+		dir := filepath.Dir(tests[0].Dir)
+		ageTree(t, dir)
+		before := treeState(t, dir)
+		vs, err := r.run(t, tests)
+		checkVerdicts(t, vs, err)
+		if after := treeState(t, dir); !slices.Equal(after, before) {
+			t.Errorf("Run with ReadOnly and Learn %v changed the fixtures:\n%s\nwant\n%s", learn, strings.Join(after, "\n"), strings.Join(before, "\n"))
+		}
 	}
-	sample := "." + string(filepath.Separator) + "a.go"
-	want := `Executing 2 tests.
-[1/2] PASSED test/a
-  $ (cd '` + strings.ReplaceAll(filepath.ToSlash(dir), "'", `'\''`) + `/a' && '/opt/open grep/opengrep' scan --config ` + testConfig + ` --no-rewrite-rule-ids --sarif --disable-version-check --timeout 0 -j 1 -- ` + commandLine([]string{sample}) + `)
-  > Scanning 1 file.
-  >
-  > Ran 1 rule.
-[2/2] FAILED(SETUP) test/b
-  no code samples
-1 tests passed; 1 tests failed:
-  FAILED: test/b
-`
-	if code, stdout, _ := r.run(context.Background(), tests); code != 1 || stdout != want {
-		t.Errorf("Run --show-opengrep-output = %d, stdout\n%s\nwant 1, stdout\n%s", code, stdout, want)
+}
+
+// ageTree makes everything under dir an hour old, so that writing or
+// removing a file in a directory changes the directory's modification time.
+func ageTree(t *testing.T, dir string) {
+	t.Helper()
+	old := time.Now().Add(-time.Hour)
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chtimes(p, old, old)
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+}
+
+// treeState returns the path, mode, size and modification time of
+// everything under dir.
+func treeState(t *testing.T, dir string) []string {
+	t.Helper()
+	var state []string
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		state = append(state, fmt.Sprintf("%s %v %d %d", p, fi.Mode(), fi.Size(), fi.ModTime().UnixNano()))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state
 }
 
 // A fixture directory that is a symlink fails at SETUP, and gogrep never
 // removes files through it.
 func TestRunSymlinkedFixture(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")
 	writeTree(t, target, map[string]string{"actual.txt": "kept\n", "actual.sarif": "kept"})
@@ -371,9 +420,9 @@ func TestRunSymlinkedFixture(t *testing.T) {
 	}
 	r := newFakeRunner()
 	test := &Test{Fixture: &Fixture{Name: "test/link", Dir: link, Setup: errors.New("symlinks to directories are not supported in the test root: link")}}
-	const want = "Executing 1 tests.\n[1/1] FAILED(SETUP) test/link\n  symlinks to directories are not supported in the test root: link\n0 tests passed; 1 tests failed:\n  FAILED: test/link\n"
-	if code, stdout, stderr := r.run(context.Background(), []*Test{test}); code != 1 || stdout != want || stderr != "" {
-		t.Errorf("Run = %d, stderr %q, stdout\n%s\nwant 1, no stderr, stdout\n%s", code, stderr, stdout, want)
+	const want = "FAILED(SETUP) test/link\n  symlinks to directories are not supported in the test root: link\n"
+	if vs, err := r.run(t, []*Test{test}); err != nil || describe(vs) != want || len(vs) != 1 || vs[0].FileErrors != nil {
+		t.Errorf("Run = %v, verdicts\n%s\nwant no error, verdicts\n%s", err, describe(vs), want)
 	}
 	for name, want := range map[string]string{"actual.txt": "kept\n", "actual.sarif": "kept"} {
 		if data, err := os.ReadFile(filepath.Join(target, name)); string(data) != want {
@@ -382,35 +431,8 @@ func TestRunSymlinkedFixture(t *testing.T) {
 	}
 }
 
-func TestCommandLine(t *testing.T) {
-	got := commandLine([]string{"/bin/opengrep", "scan", "--config=/a b/c.yaml", "--", "./x-y_z.go", "./it's.go", "", `.\a.go`, "./h€.go"})
-	want := `/bin/opengrep scan '--config=/a b/c.yaml' -- ./x-y_z.go './it'\''s.go' '' '.\a.go' './h€.go'`
-	if got != want {
-		t.Errorf("commandLine = %s, want %s", got, want)
-	}
-}
-
-// watchWriter is a buffer that is safe for concurrent use and closes seen
-// once it holds want.
-type watchWriter struct {
-	mu   sync.Mutex
-	buf  bytes.Buffer
-	want string
-	seen chan struct{}
-	once sync.Once
-}
-
-func (w *watchWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	n, err := w.buf.Write(p)
-	if strings.Contains(w.buf.String(), w.want) {
-		w.once.Do(func() { close(w.seen) })
-	}
-	return n, err
-}
-
 func TestRunInterrupt(t *testing.T) {
+	t.Parallel()
 	for _, threads := range []int{1, 4} {
 		r := newFakeRunner()
 		r.Threads = threads
@@ -429,28 +451,32 @@ func TestRunInterrupt(t *testing.T) {
 			<-ctx.Done()
 			r.fakes[test.Dir].out = Output{Stdout: []byte(`{"vers`), Err: errors.New("signal: killed"), Code: -1}
 		}
-		stdout := &watchWriter{want: "[1/4] PASSED test/a-pass\n", seen: make(chan struct{})}
-		want := "Executing 4 tests.\n[1/4] PASSED test/a-pass\n"
+		first := make(chan struct{}) // closed once a-pass is reported
+		want := "PASSED test/a-pass\n"
 		if threads == 1 {
 			// a-pass and b-diff finish, then gogrep is interrupted while c-missing runs.
 			r.fakes[tests[2].Dir].before = func(ctx context.Context) {
 				cancel()
 				killed(ctx, tests[2])
 			}
-			want += "[2/4] FAILED(RESULT) test/b-diff\n--- expected\n+++ actual\n@@ -0,0 +1,1 @@\n+| a.go:1:1:1:2 | new |\n"
+			want += "FAILED(RESULT) test/b-diff\n--- expected\n+++ actual\n@@ -0,0 +1,1 @@\n+| a.go:1:1:1:2 | new |\n"
 		} else {
 			// a-pass is reported, then gogrep is interrupted while b-diff and c-missing run.
 			r.fakes[tests[1].Dir].before = func(ctx context.Context) { killed(ctx, tests[1]) }
 			r.fakes[tests[2].Dir].before = func(ctx context.Context) {
-				<-stdout.seen
+				<-first
 				cancel()
 				killed(ctx, tests[2])
 			}
 		}
-		var stderr bytes.Buffer
-		code := r.Run(ctx, tests, stdout, &stderr)
-		if code != 130 || stdout.buf.String() != want || stderr.String() != "gogrep: interrupted\n" {
-			t.Errorf("Run with %d threads, interrupted = %d, stderr %q, stdout\n%s\nwant 130, stderr %q, stdout\n%s", threads, code, &stderr, &stdout.buf, "gogrep: interrupted\n", want)
+		var reported []*Verdict
+		vs, err := r.Run(ctx, tests, func(v *Verdict) {
+			if reported = append(reported, v); len(reported) == 1 {
+				close(first)
+			}
+		})
+		if !errors.Is(err, context.Canceled) || describe(vs) != want || !slices.Equal(reported, vs) {
+			t.Errorf("Run with %d threads, interrupted = %v, verdicts\n%s\nwant %v, verdicts\n%s", threads, err, describe(vs), context.Canceled, want)
 		}
 		if threads == 1 {
 			checkFile(t, tests[1], actualFile, "| a.go:1:1:1:2 | new |\n")
@@ -467,6 +493,7 @@ func TestRunInterrupt(t *testing.T) {
 }
 
 func TestRunWriteError(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("needs a directory that its owner cannot write to")
 	}
@@ -477,14 +504,21 @@ func TestRunWriteError(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(locked, 0o700) })
-	code, stdout, stderr := r.run(context.Background(), tests)
-	if code != 2 || stdout != testsReport || !strings.HasPrefix(stderr, "gogrep: writing test/b-diff/actual.txt: ") || strings.Count(stderr, "\n") != 1 {
-		t.Errorf("Run = %d, stderr %q, stdout\n%s\nwant 2, an error writing test/b-diff/actual.txt, stdout\n%s", code, stderr, stdout, testsReport)
+	vs, err := r.run(t, tests)
+	if len(vs) != len(tests) {
+		t.Fatalf("Run = %d verdicts, %v; want %d", len(vs), err, len(tests))
 	}
+	errs := vs[1].FileErrors
+	if len(errs) != 1 || !strings.HasPrefix(errs[0].Error(), "writing test/b-diff/actual.txt: ") {
+		t.Errorf("file errors of %s = %q, want an error writing test/b-diff/actual.txt", vs[1].Name, errs)
+	}
+	vs[1].FileErrors = nil
+	checkVerdicts(t, vs, err)
 	checkFile(t, tests[2], actualFile, "| a.go:1:1:1:2 | m |\n")
 }
 
 func TestRunLearnErrors(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("needs files that their owner cannot read or write")
 	}
@@ -506,24 +540,22 @@ func TestRunLearnErrors(t *testing.T) {
 		}
 		t.Cleanup(func() { os.Chmod(chmod.path, 0o700) })
 	}
-	want := `Executing 2 tests.
-[1/2] FAILED(RESULT) test/a
+	want := `FAILED(RESULT) test/a
 --- expected
 +++ actual
 @@ -1,1 +1,1 @@
 -| a.go:1:1:1:2 | old |
 +| a.go:1:1:1:2 | new |
-[2/2] FAILED(RESULT) test/b
+FAILED(RESULT) test/b
   open ` + expected + `: permission denied
-0 tests passed; 2 tests failed:
-  FAILED: test/a
-  FAILED: test/b
 `
-	code, stdout, stderr := r.run(context.Background(), tests)
-	errs := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
-	if code != 2 || stdout != want || len(errs) != 2 ||
-		!strings.HasPrefix(errs[0], "gogrep: writing test/a/expected.txt: ") || !strings.HasPrefix(errs[1], "gogrep: writing test/a/actual.txt: ") {
-		t.Errorf("Run --learn = %d, stderr %q, stdout\n%s\nwant 2, errors writing test/a/expected.txt and actual.txt, stdout\n%s", code, stderr, stdout, want)
+	vs, err := r.run(t, tests)
+	if err != nil || describe(vs) != want {
+		t.Fatalf("Run --learn = %v, verdicts\n%s\nwant no error, verdicts\n%s", err, describe(vs), want)
+	}
+	if errs := vs[0].FileErrors; len(errs) != 2 ||
+		!strings.HasPrefix(errs[0].Error(), "writing test/a/expected.txt: ") || !strings.HasPrefix(errs[1].Error(), "writing test/a/actual.txt: ") || vs[1].FileErrors != nil {
+		t.Errorf("file errors = %q, %q; want errors writing test/a/expected.txt and actual.txt, then none", errs, vs[1].FileErrors)
 	}
 	// accept must not make the results of the earlier run expected: b's
 	// actual.txt holds this run's.
@@ -531,6 +563,7 @@ func TestRunLearnErrors(t *testing.T) {
 }
 
 func TestAccept(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	r := newFakeRunner()
 	tests := []*Test{
@@ -546,9 +579,8 @@ func TestAccept(t *testing.T) {
 	for _, test := range tests {
 		fixtures = append(fixtures, test.Fixture)
 	}
-	var stdout, stderr bytes.Buffer
-	if code := Accept(fixtures, &stdout, &stderr); code != 0 || stdout.String() != "Accepted test/a\nAccepted test/c\n" || stderr.Len() > 0 {
-		t.Errorf("Accept = %d, %q, %q; want 0, %q, no stderr", code, &stdout, &stderr, "Accepted test/a\nAccepted test/c\n")
+	if got := accepted(Accept(fixtures)); !slices.Equal(got, []string{"test/a", "test/c"}) {
+		t.Errorf("Accept = %q, want [test/a test/c]", got)
 	}
 	for _, f := range []struct {
 		test             *Test
@@ -574,15 +606,31 @@ func TestAccept(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(tests[1].Dir, 0o700) })
 	writeTree(t, tests[2].Dir, map[string]string{"actual.txt": "newer\n"})
-	stdout.Reset()
-	stderr.Reset()
-	if code := Accept(fixtures, &stdout, &stderr); code != 2 || stdout.String() != "Accepted test/c\n" ||
-		!strings.HasPrefix(stderr.String(), "gogrep: accepting test/b/actual.txt: ") {
-		t.Errorf("Accept with a read-only fixture = %d, %q, %q; want 2, %q, an error accepting test/b/actual.txt", code, &stdout, &stderr, "Accepted test/c\n")
+	if got := accepted(Accept(fixtures)); !slices.Equal(got, []string{"test/b: permission denied", "test/c"}) {
+		t.Errorf("Accept with a read-only fixture = %q, want [test/b: permission denied test/c]", got)
 	}
 }
 
+// accepted returns the names of the fixtures of acceptances, each followed
+// by ": permission denied" when it failed for lack of permission, or by its
+// error.
+func accepted(acceptances []Acceptance) []string {
+	var out []string
+	for _, a := range acceptances {
+		switch {
+		case errors.Is(a.Err, fs.ErrPermission):
+			out = append(out, a.Name+": permission denied")
+		case a.Err != nil:
+			out = append(out, a.Name+": "+a.Err.Error())
+		default:
+			out = append(out, a.Name)
+		}
+	}
+	return out
+}
+
 func TestPlan(t *testing.T) {
+	t.Parallel()
 	all := ruleSet("project", "project.go.no-exec-command", "project.go.other")
 	fixtures := []*Fixture{
 		{Name: "a", Namespace: "go", Ref: "no-exec-command"},
@@ -613,7 +661,8 @@ func TestPlan(t *testing.T) {
 	}
 }
 
-func TestWarnUntested(t *testing.T) {
+func TestUntested(t *testing.T) {
+	t.Parallel()
 	project := ruleSet("project", "project.go.c", "project.go.a", "project.go.b")
 	tested := func(ids ...string) []*Test {
 		tests := []*Test{{Fixture: &Fixture{Name: "broken"}}}
@@ -624,21 +673,21 @@ func TestWarnUntested(t *testing.T) {
 	}
 	tests := []struct {
 		tests []*Test
-		want  string
+		want  []string
 	}{
-		{tested("project.go.a", "project.go.b", "project.go.c"), ""},
-		{tested("project.go.a", "project.go.c", "gogrep.x"), "gogrep: warning: 1 project rule has no test fixture:\n  project.go.b\n"},
-		{tested("project.go.a"), "gogrep: warning: 2 project rules have no test fixture:\n  project.go.b\n  project.go.c\n"},
+		{tested("project.go.a", "project.go.b", "project.go.c"), nil},
+		{tested("project.go.a", "project.go.c", "gogrep.x"), []string{"project.go.b"}},
+		{tested("project.go.a"), []string{"project.go.b", "project.go.c"}},
 	}
 	for _, tt := range tests {
-		var w bytes.Buffer
-		if WarnUntested(&w, project, tt.tests); w.String() != tt.want {
-			t.Errorf("WarnUntested = %q, want %q", &w, tt.want)
+		if got := Untested(project, tt.tests); !slices.Equal(got, tt.want) {
+			t.Errorf("Untested = %q, want %q", got, tt.want)
 		}
 	}
 }
 
 func TestThreads(t *testing.T) {
+	t.Parallel()
 	cpus := runtime.NumCPU()
 	tests := []struct{ threads, n, want int }{
 		{0, 1000, cpus},

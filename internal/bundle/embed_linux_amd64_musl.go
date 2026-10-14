@@ -1,4 +1,4 @@
-//go:build bundled && musl && linux && amd64
+//go:build gogrep_bundled && gogrep_musl && linux && amd64
 
 package bundle
 
@@ -6,6 +6,3 @@ import _ "embed"
 
 //go:embed bin/opengrep_linux_amd64_musl
 var binary []byte
-
-//go:embed bin/opengrep_linux_amd64_musl.sha256
-var sum string

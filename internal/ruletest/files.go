@@ -3,7 +3,6 @@ package ruletest
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -57,13 +56,19 @@ func removeFile(f *Fixture, name string) error {
 	return nil
 }
 
-// Accept makes the actual.txt of each fixture its expected.txt and prints
-// "Accepted <fixture>" on stdout. Fixtures without actual.txt are skipped,
-// and so are fixtures that fail at SETUP, since gogrep test removes their
-// actual.txt. Accept returns gogrep's exit code: 0, or 2 when a file could
-// not be renamed, which it reports on stderr.
-func Accept(fixtures []*Fixture, stdout, stderr io.Writer) int {
-	code := 0
+// An Acceptance is a fixture whose actual.txt Accept tried to make its
+// expected.txt.
+type Acceptance struct {
+	*Fixture
+	Err error // why actual.txt could not become expected.txt; nil when it did
+}
+
+// Accept makes the actual.txt of each fixture its expected.txt, readable and
+// writable by its owner only, and returns an Acceptance for each fixture
+// that has an actual.txt, in order. Fixtures that fail at SETUP are skipped,
+// since gogrep test removes their actual.txt.
+func Accept(fixtures []*Fixture) []Acceptance {
+	var out []Acceptance
 	for _, f := range fixtures {
 		if f.Setup != nil {
 			continue
@@ -76,12 +81,7 @@ func Accept(fixtures []*Fixture, stdout, stderr io.Writer) int {
 		if err == nil {
 			err = os.Chmod(expected, 0o600)
 		}
-		if err != nil {
-			fmt.Fprintf(stderr, "gogrep: accepting %s: %v\n", path.Join(f.Name, actualFile), err)
-			code = 2
-			continue
-		}
-		fmt.Fprintf(stdout, "Accepted %s\n", f.Name)
+		out = append(out, Acceptance{Fixture: f, Err: err})
 	}
-	return code
+	return out
 }

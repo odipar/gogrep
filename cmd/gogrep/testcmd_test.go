@@ -1,12 +1,13 @@
-package gogrep
+package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -124,14 +125,17 @@ func requireOpengrep(t *testing.T) {
 			pinSkip = "reading opengrep.json: " + err.Error()
 			return
 		}
-		bin, err := opengrepBin()
+		c := newTestCLI(t)
+		cmd, err := c.eng.Command(context.Background(), c.dir, nil, "--version")
 		if err != nil {
 			pinSkip = "no opengrep: " + err.Error()
 			return
 		}
-		out, err := exec.Command(bin, "--version").Output()
-		if v := strings.TrimSpace(string(out)); err != nil || "v"+v != pin.Version {
-			pinSkip = fmt.Sprintf("%s --version = %q, %v; the golden files need opengrep %s", bin, v, err, pin.Version)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		err = cmd.Run()
+		if v := strings.TrimSpace(out.String()); err != nil || "v"+v != pin.Version {
+			pinSkip = fmt.Sprintf("%s --version = %q, %v; the golden files need opengrep %s", cmd.Path, v, err, pin.Version)
 		}
 	})
 	if pinSkip != "" {
@@ -140,11 +144,9 @@ func requireOpengrep(t *testing.T) {
 }
 
 // checkGolden compares output with the golden file testdata/golden/name, or
-// rewrites the file with -update. The golden files hold the output of a
-// bundled build; other builds add a hint to unresolved rule references.
+// rewrites the file with -update.
 func checkGolden(t *testing.T, name, output string) {
 	t.Helper()
-	output = strings.ReplaceAll(output, "; this gogrep build has no bundled rule sets", "")
 	file := filepath.Join(repoDir, "testdata", "golden", name)
 	if *update {
 		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
@@ -365,6 +367,27 @@ func TestTestMissingExpected(t *testing.T) {
 	}
 	checkGolden(t, "exec-command-pass.txt", stdout)
 	checkNoFile(t, actual)
+}
+
+// gogrep test accept reports the fixtures whose actual.txt it accepted on
+// stdout, and those whose it could not on stderr, with exit code 2.
+func TestTestAccept(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory that its owner cannot write to")
+	}
+	accepted, locked := testRoot+"/go/exec-command", testRoot+"/go/exec-command-in-prod"
+	testProject(t, map[string]string{accepted + "/actual.txt": "new\n", locked + "/actual.txt": "new\n"})
+	if err := os.Chmod(filepath.FromSlash(locked), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(filepath.FromSlash(locked), 0o700) })
+	code, stdout, stderr := runGogrep("test", "accept")
+	if want := "Accepted " + accepted + "\n"; code != 2 || stdout != want ||
+		!strings.HasPrefix(stderr, "gogrep: accepting "+locked+"/actual.txt: ") || strings.Count(stderr, "\n") != 1 {
+		t.Errorf("gogrep test accept = %d, %q, %q; want 2, %q, an error accepting %s/actual.txt", code, stdout, stderr, want, locked)
+	}
+	checkFile(t, accepted+"/expected.txt", "new\n")
+	checkNoFile(t, accepted+"/actual.txt")
 }
 
 func TestTestRegression(t *testing.T) {

@@ -62,6 +62,7 @@ func rejected(cause string) string {
 
 // Each row of the design's §6.3, on the recorded runs.
 func TestClassifyRecorded(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		samples []string
@@ -106,6 +107,7 @@ func TestClassifyRecorded(t *testing.T) {
 }
 
 func TestClassify(t *testing.T) {
+	t.Parallel()
 	ok := result("a.go", [4]int{1, 1, 1, 2}, "m")
 	other := result("a.go", [4]int{1, 1, 1, 2}, "m")
 	other["ruleId"] = "project.go.other"

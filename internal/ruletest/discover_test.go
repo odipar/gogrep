@@ -1,17 +1,16 @@
 package ruletest
 
 import (
+	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
 )
 
-// testRoot is the test root, relative to the directory the tests run in.
+// testRoot is the test root, relative to the project directory.
 var testRoot = filepath.Join("opengrep", "gogrep", "rules", "test")
 
 // writeTree creates files, keyed by slash path, under dir.
@@ -28,13 +27,13 @@ func writeTree(t *testing.T, dir string, files map[string]string) {
 	}
 }
 
-// fixtureTree creates a test root in a new current directory, with a fixture
-// for each check of the design's §2.3, and returns the fixtures Discover
-// should find in it with no paths.
-func fixtureTree(t *testing.T) []summary {
+// fixtureTree creates a test root in a new project directory, with a fixture
+// for each check of the design's §2.3, and returns the project directory and
+// the fixtures Discover should find in it with no paths.
+func fixtureTree(t *testing.T) (string, []summary) {
 	t.Helper()
 	dir := t.TempDir()
-	t.Chdir(dir)
+	root := filepath.Join(dir, testRoot)
 	files := map[string]string{
 		"go.mod":         "module fixtures\n",
 		".gitattributes": "* -text\n",
@@ -98,8 +97,8 @@ func fixtureTree(t *testing.T) []summary {
 		files[fmt.Sprintf("setup/many/%s%03d.go", strings.Repeat("x", 111), i)] = ""
 		files[fmt.Sprintf("setup/too-many/%s%03d.go", strings.Repeat("x", 112), i)] = ""
 	}
-	writeTree(t, testRoot, files)
-	if err := os.Mkdir(filepath.Join(testRoot, "setup", "expected-dir", "expected.txt"), 0o700); err != nil {
+	writeTree(t, root, files)
+	if err := os.Mkdir(filepath.Join(root, "setup", "expected-dir", "expected.txt"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -107,43 +106,43 @@ func fixtureTree(t *testing.T) []summary {
 	for i := range 250 {
 		many = append(many, fmt.Sprintf("%s%03d.go", strings.Repeat("x", 111), i))
 	}
-	root := "opengrep/gogrep/rules/test/"
+	name := "opengrep/gogrep/rules/test/"
 	want := []summary{
-		{Name: root + "go/exec-command", Namespace: "go", Ref: "no-exec-command", Samples: []string{
+		{Name: name + "go/exec-command", Namespace: "go", Ref: "no-exec-command", Samples: []string{
 			"-dash.go", ".github/workflows/ci.yml", "a-b.go", "a/b.go", "sample.go",
 			"sub/.gogrep-1.tmp", "sub/expected.txt", "sub/runner_test.go", "vendor/v.go",
 		}},
-		{Name: root + "go/net/dial-basic", Namespace: "go/net", Ref: "dial", Samples: []string{"d.go"}},
-		{Name: root + "nested/outer", Namespace: "nested", Setup: "fixture contains nested fixture " + root + "nested/outer/inner"},
-		{Name: root + "nested/outer/inner", Namespace: "nested/outer", Setup: "fixture is nested inside " + root + "nested/outer"},
-		{Name: root + "orphan/actual-only", Setup: "actual.txt has no rule.ref next to it"},
-		{Name: root + "orphan/old-name", Setup: "expected.txt has no rule.ref next to it"},
-		{Name: root + "setup/actually", Namespace: "setup", Setup: "unknown regression file actually.go; the expected file is expected.txt"},
-		{Name: root + "setup/bad-ref", Namespace: "setup", Setup: "rule.ref has 2 references; a fixture tests exactly one rule"},
-		{Name: root + "setup/case", Namespace: "setup", Setup: "unknown regression file Expected.txt; the expected file is expected.txt"},
-		{Name: root + "setup/empty", Namespace: "setup", Setup: "no code samples"},
-		{Name: root + "setup/expected-dir", Namespace: "setup", Setup: "expected.txt must be a regular file"},
-		{Name: root + "setup/many", Namespace: "setup", Ref: "x", Samples: many},
-		{Name: root + "setup/ref-dir", Namespace: "setup", Setup: "rule.ref must be a regular file"},
-		{Name: root + "setup/too-many", Namespace: "setup", Setup: "too many sample files (250); split the fixture"},
-		{Name: root + "setup/typo", Namespace: "setup", Setup: "unknown regression file expected.text; the expected file is expected.txt"},
-		{Name: root + "shallow", Setup: "fixtures live in opengrep/gogrep/rules/test/<namespace>/<fixture>/"},
+		{Name: name + "go/net/dial-basic", Namespace: "go/net", Ref: "dial", Samples: []string{"d.go"}},
+		{Name: name + "nested/outer", Namespace: "nested", Setup: "fixture contains nested fixture " + name + "nested/outer/inner"},
+		{Name: name + "nested/outer/inner", Namespace: "nested/outer", Setup: "fixture is nested inside " + name + "nested/outer"},
+		{Name: name + "orphan/actual-only", Setup: "actual.txt has no rule.ref next to it"},
+		{Name: name + "orphan/old-name", Setup: "expected.txt has no rule.ref next to it"},
+		{Name: name + "setup/actually", Namespace: "setup", Setup: "unknown regression file actually.go; the expected file is expected.txt"},
+		{Name: name + "setup/bad-ref", Namespace: "setup", Setup: "rule.ref has 2 references; a fixture tests exactly one rule"},
+		{Name: name + "setup/case", Namespace: "setup", Setup: "unknown regression file Expected.txt; the expected file is expected.txt"},
+		{Name: name + "setup/empty", Namespace: "setup", Setup: "no code samples"},
+		{Name: name + "setup/expected-dir", Namespace: "setup", Setup: "expected.txt must be a regular file"},
+		{Name: name + "setup/many", Namespace: "setup", Ref: "x", Samples: many},
+		{Name: name + "setup/ref-dir", Namespace: "setup", Setup: "rule.ref must be a regular file"},
+		{Name: name + "setup/too-many", Namespace: "setup", Setup: "too many sample files (250); split the fixture"},
+		{Name: name + "setup/typo", Namespace: "setup", Setup: "unknown regression file expected.text; the expected file is expected.txt"},
+		{Name: name + "shallow", Setup: "fixtures live in opengrep/gogrep/rules/test/<namespace>/<fixture>/"},
 	}
 
-	link := filepath.Join(testRoot, "setup", "symlink")
+	link := filepath.Join(root, "setup", "symlink")
 	writeTree(t, link, map[string]string{"rule.ref": "x\n", "a.go": "package a\n"})
 	if err := os.Symlink("a.go", filepath.Join(link, "b.go")); err != nil {
 		t.Logf("not testing symlinks: %v", err)
 		os.RemoveAll(link)
 	} else {
-		want = append(want, summary{Name: root + "setup/symlink", Namespace: "setup", Setup: "symlinks are not supported in fixtures: b.go"})
+		want = append(want, summary{Name: name + "setup/symlink", Namespace: "setup", Setup: "symlinks are not supported in fixtures: b.go"})
 	}
 	// Discovery does not follow symlinks, so it reports a symlinked fixture
 	// or namespace directory rather than skip the fixtures behind it.
 	shared := filepath.Join(dir, "shared")
 	writeTree(t, shared, map[string]string{"fx/rule.ref": "x\n", "fx/a.go": "package a\n"})
 	for _, l := range []struct{ name, target string }{{"links/fx", filepath.Join(shared, "fx")}, {"linkns", shared}} {
-		p := filepath.Join(testRoot, filepath.FromSlash(l.name))
+		p := filepath.Join(root, filepath.FromSlash(l.name))
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -151,27 +150,26 @@ func fixtureTree(t *testing.T) []summary {
 			t.Logf("not testing symlinks: %v", err)
 			continue
 		}
-		want = append(want, summary{Name: root + l.name, Setup: "symlinks to directories are not supported in the test root: " + l.name})
+		want = append(want, summary{Name: name + l.name, Setup: "symlinks to directories are not supported in the test root: " + l.name})
 	}
 	// Symlinks to files, or to nothing, hide no fixture and are ignored like
 	// any other file outside the fixtures.
 	writeTree(t, shared, map[string]string{"go.mod": "module fixtures\n"})
 	for _, l := range []struct{ name, target string }{{"linked-go.mod", filepath.Join(shared, "go.mod")}, {"dangling", filepath.Join(shared, "nope")}} {
-		if err := os.Symlink(l.target, filepath.Join(testRoot, l.name)); err != nil {
+		if err := os.Symlink(l.target, filepath.Join(root, l.name)); err != nil {
 			t.Logf("not testing symlinks: %v", err)
 		}
 	}
-	if runtime.GOOS != "windows" {
-		writeTree(t, testRoot, map[string]string{"setup/socket/rule.ref": "x\n", "setup/socket/a.go": "package a\n"})
-		l, err := net.Listen("unix", filepath.Join(testRoot, "setup", "socket", "sock"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { l.Close() })
-		want = append(want, summary{Name: root + "setup/socket", Namespace: "setup", Setup: "special files are not supported in fixtures: sock"})
+	special := filepath.Join(root, "setup", "special")
+	writeTree(t, special, map[string]string{"rule.ref": "x\n", "a.go": "package a\n"})
+	if err := mkfifo(filepath.Join(special, "fifo")); err != nil {
+		t.Logf("not testing special files: %v", err)
+		os.RemoveAll(special)
+	} else {
+		want = append(want, summary{Name: name + "setup/special", Namespace: "setup", Setup: "special files are not supported in fixtures: fifo"})
 	}
 	slices.SortFunc(want, func(a, b summary) int { return strings.Compare(a.Name, b.Name) })
-	return want
+	return dir, want
 }
 
 // A summary is a Fixture in a form tests can compare, without the samples
@@ -203,8 +201,9 @@ func summarize(fs []*Fixture) []summary {
 }
 
 func TestDiscover(t *testing.T) {
-	want := fixtureTree(t)
-	fixtures, err := Discover(testRoot, nil)
+	t.Parallel()
+	dir, want := fixtureTree(t)
+	fixtures, err := Discover(dir, testRoot, nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -220,20 +219,19 @@ func TestDiscover(t *testing.T) {
 			t.Errorf("fixture %d = %v\nwant %v", i, got[i], want[i])
 		}
 	}
-	if want := filepath.Join(testRoot, "go", "exec-command"); fixtures[0].Dir != want {
+	if want := filepath.Join(dir, testRoot, "go", "exec-command"); fixtures[0].Dir != want {
 		t.Errorf("Dir = %q, want %q", fixtures[0].Dir, want)
 	}
 }
 
 func TestDiscoverPaths(t *testing.T) {
+	t.Parallel()
+	dir, fixtures := fixtureTree(t)
 	var all []string
-	for _, f := range fixtureTree(t) {
+	for _, f := range fixtures {
 		all = append(all, strings.TrimPrefix(f.Name, "opengrep/gogrep/rules/test/"))
 	}
-	abs, err := filepath.Abs(filepath.Join(testRoot, "go", "net", "dial-basic", "rule.ref"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	abs := filepath.Join(dir, testRoot, "go", "net", "dial-basic", "rule.ref")
 	root := "opengrep/gogrep/rules/test"
 	type pathsTest struct {
 		name  string
@@ -269,7 +267,7 @@ func TestDiscoverPaths(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fixtures, err := Discover(testRoot, tt.paths)
+			fixtures, err := Discover(dir, testRoot, tt.paths)
 			var got []string
 			for _, f := range fixtures {
 				got = append(got, strings.TrimPrefix(f.Name, root+"/"))
@@ -284,17 +282,19 @@ func TestDiscoverPaths(t *testing.T) {
 // A path in the wrong case exists on a case-insensitive file system but
 // names no fixture, so it fails there too.
 func TestDiscoverPathCase(t *testing.T) {
-	fixtureTree(t)
+	t.Parallel()
+	dir, _ := fixtureTree(t)
 	root := "opengrep/gogrep/rules/test"
-	_, err := Discover(testRoot, []string{root + "/go/net", root + "/GO/exec-command"})
+	_, err := Discover(dir, testRoot, []string{root + "/go/net", root + "/GO/exec-command"})
 	if got := errText(err); got != "no tests found under "+root+"/GO/exec-command" && got != root+"/GO/exec-command does not exist" {
 		t.Errorf("Discover with a path in the wrong case: %q", got)
 	}
 }
 
 // An absolute path may reach the test root through symlinks other than
-// those of the current directory, as resolved paths from editors do.
+// those of the project directory, as resolved paths from editors do.
 func TestDiscoverLinkedPaths(t *testing.T) {
+	t.Parallel()
 	real := t.TempDir()
 	link := filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(real, link); err != nil {
@@ -305,19 +305,18 @@ func TestDiscoverLinkedPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTree(t, filepath.Join(real, testRoot), map[string]string{"go/x/rule.ref": "x\n", "go/x/a.go": "package a\n"})
-	for _, cwd := range []string{link, resolved} {
-		t.Chdir(cwd)
-		for _, base := range []string{real, link, resolved} {
-			for _, p := range []string{filepath.Join(base, testRoot, "go"), filepath.Join(base, testRoot, "go", "x", "a.go"), filepath.Join(base, testRoot)} {
-				fixtures, err := Discover(testRoot, []string{p})
+	for _, base := range []string{link, resolved} {
+		for _, other := range []string{real, link, resolved} {
+			for _, p := range []string{filepath.Join(other, testRoot, "go"), filepath.Join(other, testRoot, "go", "x", "a.go"), filepath.Join(other, testRoot)} {
+				fixtures, err := Discover(base, testRoot, []string{p})
 				if err != nil || len(fixtures) != 1 || fixtures[0].Name != "opengrep/gogrep/rules/test/go/x" {
-					t.Errorf("in %s, Discover(%q) = %v, %v; want the fixture go/x", cwd, p, summarize(fixtures), err)
+					t.Errorf("in %s, Discover(%q) = %v, %v; want the fixture go/x", base, p, summarize(fixtures), err)
 				}
 			}
 		}
 		outside := filepath.Join(resolved, "opengrep", "gogrep", "rules")
-		if _, err := Discover(testRoot, []string{outside}); errText(err) != outside+" is not under opengrep/gogrep/rules/test" {
-			t.Errorf("in %s, Discover(%q) = %q, want it not under the test root", cwd, outside, errText(err))
+		if _, err := Discover(base, testRoot, []string{outside}); errText(err) != outside+" is not under opengrep/gogrep/rules/test" {
+			t.Errorf("in %s, Discover(%q) = %q, want it not under the test root", base, outside, errText(err))
 		}
 	}
 }
@@ -325,13 +324,14 @@ func TestDiscoverLinkedPaths(t *testing.T) {
 // On a case-sensitive file system a Test directory can sit next to the test
 // root. It is reserved, since nothing reads it; a file named so is not.
 func TestDiscoverRootCaseVariant(t *testing.T) {
-	t.Chdir(t.TempDir())
-	writeTree(t, testRoot, map[string]string{"go/x/rule.ref": "x\n", "go/x/a.go": "package a\n"})
-	upper := filepath.Join(filepath.Dir(testRoot), "TEST")
+	t.Parallel()
+	dir := t.TempDir()
+	writeTree(t, filepath.Join(dir, testRoot), map[string]string{"go/x/rule.ref": "x\n", "go/x/a.go": "package a\n"})
+	upper := filepath.Join(dir, filepath.Dir(testRoot), "TEST")
 	if err := os.WriteFile(upper, nil, 0o600); err != nil {
 		t.Skipf("the file system ignores case: %v", err)
 	}
-	if _, err := Discover(testRoot, nil); err != nil {
+	if _, err := Discover(dir, testRoot, nil); err != nil {
 		t.Errorf("Discover with a TEST file next to the test root: %v", err)
 	}
 	if err := os.Remove(upper); err != nil {
@@ -341,33 +341,35 @@ func TestDiscoverRootCaseVariant(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "opengrep/gogrep/rules/TEST is reserved: rules in it do not load, and fixtures belong in opengrep/gogrep/rules/test"
-	if _, err := Discover(testRoot, nil); errText(err) != want {
+	if _, err := Discover(dir, testRoot, nil); errText(err) != want {
 		t.Errorf("Discover with a TEST directory next to the test root: %q, want %q", errText(err), want)
 	}
 }
 
 func TestDiscoverRoot(t *testing.T) {
-	t.Chdir(t.TempDir())
-	if _, err := Discover(testRoot, nil); errText(err) != "no opengrep/gogrep/rules/test directory here; run gogrep test from the project root" {
-		t.Errorf("Discover without a test root: %q", errText(err))
+	t.Parallel()
+	dir := t.TempDir()
+	root := filepath.Join(dir, testRoot)
+	if _, err := Discover(dir, testRoot, nil); !errors.Is(err, ErrNoRoot) || errText(err) != "no rule test directory: opengrep/gogrep/rules/test" {
+		t.Errorf("Discover without a test root: %q, want an ErrNoRoot", errText(err))
 	}
 	// Whether or not the file system ignores case.
-	upper := filepath.Join(filepath.Dir(testRoot), "Test")
+	upper := filepath.Join(filepath.Dir(root), "Test")
 	writeTree(t, upper, map[string]string{"go/x/rule.ref": "x\n", "go/x/a.go": "package a\n"})
-	if _, err := Discover(testRoot, nil); errText(err) != "opengrep/gogrep/rules/Test must be spelled opengrep/gogrep/rules/test" {
+	if _, err := Discover(dir, testRoot, nil); errText(err) != "opengrep/gogrep/rules/Test must be spelled opengrep/gogrep/rules/test" {
 		t.Errorf("Discover with a Test directory: %q", errText(err))
 	}
 	if err := os.RemoveAll(upper); err != nil {
 		t.Fatal(err)
 	}
-	writeTree(t, testRoot, map[string]string{"go.mod": "module fixtures\n", "go/x/a.go": "package a\n"})
-	if _, err := Discover(testRoot, nil); errText(err) != "no tests found under opengrep/gogrep/rules/test" {
+	writeTree(t, root, map[string]string{"go.mod": "module fixtures\n", "go/x/a.go": "package a\n"})
+	if _, err := Discover(dir, testRoot, nil); errText(err) != "no tests found under opengrep/gogrep/rules/test" {
 		t.Errorf("Discover without fixtures: %q", errText(err))
 	}
 
 	// A rule.ref in the test root makes the root a fixture that holds all others.
-	writeTree(t, testRoot, map[string]string{"rule.ref": "x\n", "expected.txt": "", "go/x/rule.ref": "x\n"})
-	fixtures, err := Discover(testRoot, []string{"opengrep/gogrep/rules/test/go/x"})
+	writeTree(t, root, map[string]string{"rule.ref": "x\n", "expected.txt": "", "go/x/rule.ref": "x\n"})
+	fixtures, err := Discover(dir, testRoot, []string{"opengrep/gogrep/rules/test/go/x"})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}

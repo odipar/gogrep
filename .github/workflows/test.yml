@@ -2,6 +2,9 @@ name: test
 
 # Vets and tests gogrep, then runs the example rule test fixtures with a
 # bundled build, on every OS that gogrep test must give identical results on.
+# The other jobs run the tests under the race detector, use the library as a
+# module that `go get` fetched, test on Alpine (musl), and report the API
+# changes since the last release.
 on:
   push:
     branches: [main]
@@ -28,18 +31,213 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Check the rule-set stamps against opengrep.json
+        run: go test -run '^TestStampsMatchPins$' ./internal/rulesets
+
       - name: Fetch the pinned opengrep for this platform
         run: go run ./tools/fetch-opengrep
 
       - name: Vet
-        run: go vet ./... && go vet -tags bundled ./...
+        run: go vet ./... && go vet -tags gogrep_bundled ./...
 
-      - name: Test
-        run: go test -tags bundled ./...
+      - name: Check the build tags
+        # Platforms that opengrep.json pins no opengrep for still build with
+        # gogrep_bundled, and the old tag fails, naming the new one.
+        if: runner.os == 'Linux'
+        run: |
+          GOOS=freebsd GOARCH=amd64 go build -tags gogrep_bundled ./...
+          GOOS=linux GOARCH=386 go build -tags gogrep_bundled ./...
+          # The compiler's message is not echoed on success, so that the Go
+          # problem matcher does not report it as an error.
+          if out=$(go build -tags bundled ./... 2>&1) || ! grep -q gogrep_bundled <<< "$out"; then
+            echo "$out"
+            echo "::error::go build -tags bundled must fail naming gogrep_bundled"
+            exit 1
+          fi
 
       - name: Build gogrep with the pinned opengrep
         # A directory output adds .exe on Windows.
-        run: go build -tags bundled -o "$RUNNER_TEMP/bin/" .
+        run: go build -tags gogrep_bundled -o "$RUNNER_TEMP/bin/" ./cmd/gogrep
+
+      - name: Scan four times at once with a cold cache
+        # opengrep unpacks its runtime on its first run, and runs that start
+        # meanwhile crashed (2 of 4, SIGBUS) before gogrep prepared the
+        # runtime once, privately, in its cache. Windows cannot move the
+        # runtime, which this step finds cold as it runs before the tests:
+        # there gogrep marks it ready instead.
+        run: |
+          cold="$RUNNER_TEMP/cold"
+          mkdir -p "$cold"
+          pids=()
+          for i in 1 2 3 4; do
+            HOME="$cold" XDG_CACHE_HOME="$cold" LOCALAPPDATA="$cold" \
+              "$RUNNER_TEMP/bin/gogrep" scan --sarif . > "$cold/$i.sarif" 2> "$cold/$i.err" &
+            pids+=($!)
+          done
+          failed=0
+          for i in 1 2 3 4; do
+            if ! wait "${pids[$((i - 1))]}" || ! grep -q '"version": *"2.1.0"' "$cold/$i.sarif"; then
+              echo "::error::scan $i failed"
+              cat "$cold/$i.err"
+              failed=1
+            fi
+          done
+          if [ "$RUNNER_OS" = Windows ]; then
+            ready=$(find "$cold" -path '*/gogrep/runtime-*.ready')
+          else
+            ready=$(find "$cold" -path '*/gogrep/runtime-*/opengrep/v*' -prune)
+          fi
+          if [ -z "$ready" ]; then
+            echo "::error::gogrep prepared no runtime in its cache"
+            find "$cold" -maxdepth 4
+            failed=1
+          fi
+          echo "prepared: $ready"
+          exit $failed
+
+      - name: Install opengrep for a plain build, and test with it
+        # A build without gogrep_bundled finds opengrep in gogrep's cache,
+        # which is still empty here: install-opengrep fills it with the
+        # fetched asset, verified against opengrep.json, and the integration
+        # tests then run that copy.
+        run: |
+          go build -o "$RUNNER_TEMP/plain/" ./cmd/gogrep
+          "$RUNNER_TEMP/plain/gogrep" install-opengrep --from "internal/bundle/bin/opengrep_$(go env GOOS)_$(go env GOARCH)"
+          "$RUNNER_TEMP/plain/gogrep" opengrep --version
+          go test ./...
+
+      - name: Test
+        run: go test -tags gogrep_bundled ./...
 
       - name: Run the example rule tests
         run: cd testdata/project && "$RUNNER_TEMP/bin/gogrep" test
+
+  race:
+    # The race detector needs cgo, which Windows runners lack.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Fetch the pinned opengrep for this platform
+        run: go run ./tools/fetch-opengrep
+
+      - name: Test with the race detector
+        run: go test -race -short ./... && go test -race -short -tags gogrep_bundled ./...
+
+  consumer:
+    # testdata/consumer is a module of its own that gets this commit as any
+    # importer would: from a module proxy, which testdata/modzip fills with
+    # the commit's exact module zip. It must vet, build, tidy and vendor
+    # (vendoring fails if a go:embed in the library's import graph matches
+    # no file of the zip), ignore the importer's build tags, and scan
+    # offline with the opengrep it installs from the fetched asset.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the tags, which the pseudo-version counts from
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Fetch the pinned opengrep for this platform
+        run: go run ./tools/fetch-opengrep
+
+      - name: File this commit in a module proxy
+        run: |
+          v=$(cd testdata/modzip && go run . -repo ../.. -out "$RUNNER_TEMP/proxy")
+          echo "filed github.com/odipar/gogrep@$v"
+          # A file URL needs a drive letter's path on Windows: D:/a/_temp/proxy.
+          proxy=$(cd "$RUNNER_TEMP/proxy" && { pwd -W 2>/dev/null || pwd; })
+          {
+            echo "GOGREP_VERSION=$v"
+            echo "GOPROXY=file:///${proxy#/},https://proxy.golang.org"
+            echo "GONOSUMDB=github.com/odipar/gogrep"
+            echo "GOMODCACHE=$RUNNER_TEMP/modcache"
+            echo "GOGREP_TEST_ASSET=$GITHUB_WORKSPACE/internal/bundle/bin/opengrep_$(go env GOOS)_$(go env GOARCH)"
+          } >> "$GITHUB_ENV"
+          cp -R testdata/consumer "$RUNNER_TEMP/consumer"
+
+      - name: Get gogrep
+        working-directory: ${{ runner.temp }}/consumer
+        run: |
+          go mod edit -dropreplace=github.com/odipar/gogrep -droprequire=github.com/odipar/gogrep
+          go get "github.com/odipar/gogrep@$GOGREP_VERSION"
+
+      - name: Vet and build
+        working-directory: ${{ runner.temp }}/consumer
+        run: go vet ./... && go build ./...
+
+      - name: Tidy
+        working-directory: ${{ runner.temp }}/consumer
+        run: go mod tidy && go mod tidy -diff
+
+      - name: Vendor
+        working-directory: ${{ runner.temp }}/consumer
+        run: go mod vendor && go build -mod=vendor ./...
+
+      - name: Build with the importer's own tags
+        working-directory: ${{ runner.temp }}/consumer
+        run: go build -tags bundled,musl ./... && go build -tags gogrep_bundled,gogrep_musl ./...
+
+      - name: Test offline
+        working-directory: ${{ runner.temp }}/consumer
+        run: GOFLAGS=-mod=vendor GOPROXY=off go test -v ./...
+
+  musl:
+    # On Alpine, the library must find that the system uses musl and install
+    # opengrep's musl build, which a scan then runs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Test in golang:1.26-alpine
+        run: |
+          want=$(jq -r '.assets["linux/amd64/musl"].sha256' opengrep.json)
+          docker run --rm -v "$PWD:/src" -w /src -e GOGREP_TEST_SHA256="$want" golang:1.26-alpine sh -euc '
+            apk add --no-cache git
+            git config --global --add safe.directory "*"
+            go test -short ./...
+            cd testdata/consumer
+            GOGREP_TEST_DOWNLOAD=1 go test -v ./...
+          '
+
+  gorelease:
+    # Advisory: lists the API changes since the last release and suggests the
+    # next version. It never fails the workflow.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Report API changes
+        run: |
+          base=$(git describe --tags --abbrev=0 --match 'v[0-9]*')
+          {
+            echo "## gorelease -base=$base"
+            echo '```'
+            go run golang.org/x/exp/cmd/gorelease@v0.0.0-20260908205506-85c1c2202aba -base="$base" 2>&1 || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"

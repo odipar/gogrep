@@ -1,22 +1,13 @@
-package gogrep
+package main
 
 import (
-	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
-	"os/signal"
-	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/odipar/gogrep/internal/rules"
-	"github.com/odipar/gogrep/internal/ruletest"
+	"github.com/odipar/gogrep"
 )
 
 // testUsage is the help text of gogrep test.
@@ -98,124 +89,78 @@ func parseTestArgs(args []string) (testArgs, error) {
 // runTest implements gogrep test: it runs the rule test fixtures under
 // opengrep/gogrep/rules/test that args and sel select, or with accept makes
 // their actual results the expected ones, and returns the exit code.
-func runTest(args []string, sel selection, stdout, stderr io.Writer) int {
+func (c *cli) runTest(args []string, sel selection) int {
 	a, err := parseTestArgs(args)
-	if err == nil && a.accept && (sel.explicit || len(sel.narrow) > 0) {
+	if err == nil && a.accept && (sel.explicit || len(sel.Filters) > 0) {
 		err = errors.New("gogrep test accept takes only paths, not --rule, --suite or --gogrep-* flags")
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "gogrep: %v\n", err)
+		fmt.Fprintf(c.stderr, "gogrep: %v\n", err)
 		return 2
 	}
 	if a.help {
-		io.WriteString(stdout, testUsage)
+		io.WriteString(c.stdout, testUsage)
 		return 0
 	}
-	fixtures, err := ruletest.Discover(projectTestsDir, a.paths)
-	if err == nil {
-		if a.accept {
-			return ruletest.Accept(fixtures, stdout, stderr)
-		}
-		var code int
-		if code, err = runFixtures(fixtures, a, sel, stdout, stderr); err == nil {
-			return code
-		}
+	if a.accept {
+		return c.accept(a.paths)
 	}
-	fmt.Fprintf(stderr, "gogrep: %v\n", err)
-	return 2
+	return c.runFixtures(a, sel)
 }
 
-// runFixtures runs the tests of the fixtures whose rules sel selects and
-// returns the exit code. It returns an error, for exit code 2, when it
-// cannot run them.
-func runFixtures(fixtures []*ruletest.Fixture, a testArgs, sel selection, stdout, stderr io.Writer) (int, error) {
-	env, err := loadEnv()
-	if err != nil {
-		return 0, err
+// runFixtures runs the tests that a and sel select, prints the report and
+// returns the exit code.
+func (c *cli) runFixtures(a testArgs, sel selection) int {
+	opts := &gogrep.TestOptions{Selection: sel.Selection, Paths: a.paths, Jobs: a.threads, Learn: a.learn, KeepSARIF: a.keepSARIF}
+	if sel.empty() {
+		// It selects no rules, where the zero Selection selects every
+		// one: so does a Filter without values.
+		opts.Selection = gogrep.Selection{Filters: []gogrep.Filter{{Field: "id"}}}
 	}
-	ids, active, err := sel.filter(env)
-	if err != nil {
-		return 0, err
-	}
-	var keep func(*rules.Rule) bool
-	if active {
-		keep = func(r *rules.Rule) bool { return ids[r.ID] }
-	}
-	tests := ruletest.Plan(fixtures, allRules(env), keep)
-	if len(tests) == 0 {
-		return 0, errors.New("no tests match the selection")
+	report := &testReport{stdout: c.stdout, stderr: c.stderr, showOutput: a.showOutput}
+	opts.Progress = func(_, total int, r *gogrep.TestResult) {
+		if r == nil {
+			report.total = total
+			report.start()
+			return
+		}
+		report.add(r)
 	}
 
-	r := &ruletest.Runner{Exec: execFixture, Threads: a.threads, Learn: a.learn, KeepSARIF: a.keepSARIF, ShowOutput: a.showOutput}
-	configs := map[*rules.Rule]string{}
-	for _, t := range tests {
-		if t.Rule == nil {
+	// An interrupt stops the opengrep processes, and the tests that
+	// finished are reported.
+	ctx, stop := interruptContext()
+	defer stop()
+	rep, err := c.eng.Test(ctx, c.dir, opts)
+	switch {
+	case err != nil && ctx.Err() != nil:
+		return report.interrupted()
+	case err != nil:
+		fmt.Fprintf(c.stderr, "gogrep: %v\n", explain(err))
+		return 2
+	}
+	code := report.finish()
+	warnUntested(c.stderr, rep.Untested)
+	return code
+}
+
+// accept implements gogrep test accept: it makes the actual.txt of each
+// fixture that paths select its expected.txt, prints "Accepted <fixture>" for
+// each, and returns the exit code, 2 when a file could not be renamed.
+func (c *cli) accept(paths []string) int {
+	accepted, err := c.eng.AcceptTests(c.dir, paths)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "gogrep: %v\n", explain(err))
+		return 2
+	}
+	code := 0
+	for _, a := range accepted {
+		if a.Err != nil {
+			fmt.Fprintf(c.stderr, "gogrep: accepting %s/actual.txt: %v\n", a.Name, a.Err)
+			code = 2
 			continue
 		}
-		if r.Bin == "" {
-			if r.Bin, err = testBin(); err != nil {
-				return 0, err
-			}
-		}
-		if configs[t.Rule] == "" {
-			if configs[t.Rule], err = rules.Write([]*rules.Rule{t.Rule}); err != nil {
-				return 0, fmt.Errorf("writing rule %s: %w", t.Rule.ID, err)
-			}
-		}
-		t.Config = configs[t.Rule]
+		fmt.Fprintf(c.stdout, "Accepted %s\n", a.Name)
 	}
-
-	// A scan leaves Ctrl-C to its one opengrep process; gogrep test catches
-	// it, stops its opengrep processes and reports the tests that finished.
-	// A signal gogrep was started with ignored, as nohup does SIGHUP, stays
-	// ignored; given no signals at all, NotifyContext would catch every one.
-	ctx, stop := context.Background(), context.CancelFunc(func() {})
-	if sigs := slices.DeleteFunc(slices.Clone(interrupts), signal.Ignored); len(sigs) > 0 {
-		ctx, stop = signal.NotifyContext(ctx, sigs...)
-	}
-	defer stop()
-	code := r.Run(ctx, tests, stdout, stderr)
-	if code != 130 && len(a.paths) == 0 && !active {
-		ruletest.WarnUntested(stderr, env.Sets["project"], tests)
-	}
-	return code, nil
-}
-
-// testBin returns the opengrep binary that gogrep test runs, as an absolute
-// path: each opengrep process runs in its fixture's directory, where a
-// relative $OPENGREP_BIN would name another file. A binary that is missing
-// is an error, for exit code 2, rather than a failure of every test.
-func testBin() (string, error) {
-	bin, err := opengrepBin()
-	if err == nil {
-		bin, err = exec.LookPath(bin)
-	}
-	if err == nil {
-		bin, err = filepath.Abs(bin)
-	}
-	if err != nil {
-		return "", err
-	}
-	if fi, err := os.Stat(bin); err != nil || !fi.Mode().IsRegular() {
-		return "", fmt.Errorf("opengrep binary %s is not a regular file", bin)
-	}
-	return bin, nil
-}
-
-// execFixture runs opengrep for one fixture, as ruletest.Exec describes.
-func execFixture(ctx context.Context, dir string, args []string) (stdout, stderr []byte, code int, err error) {
-	var out, errb bytes.Buffer
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	killTree(cmd)
-	cmd.Dir, cmd.Env = dir, utf8Env(os.Environ())
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	cmd.WaitDelay = time.Second
-	err = cmd.Run()
-	// A process killed on Windows exits with code 1, so after an interrupt
-	// an exit code is not trusted.
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.Exited() && ctx.Err() == nil {
-		return out.Bytes(), errb.Bytes(), exitErr.ExitCode(), nil
-	}
-	return out.Bytes(), errb.Bytes(), 0, err
+	return code
 }

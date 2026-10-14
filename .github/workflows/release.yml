@@ -2,7 +2,8 @@ name: release
 
 # Pushing a v* tag builds gogrep for every platform in opengrep.json, each with
 # the pinned opengrep embedded, and publishes them as a GitHub release.
-# Running it by hand only builds and uploads them as a workflow artifact.
+# Running it by hand only builds and uploads them as a workflow artifact. After
+# a release, the smoke job gets the tag through the Go module proxy.
 on:
   push:
     tags: ['v*']
@@ -27,16 +28,16 @@ jobs:
       - name: Build
         run: |
           mkdir -p dist
-          # Targets are GOOS/GOARCH[/variant]; a variant (musl) becomes a
-          # build tag and a suffix on the file name.
+          # Targets are GOOS/GOARCH[/variant]; a variant (musl) becomes the
+          # build tag gogrep_<variant> and a suffix on the file name.
           for target in $(jq -r '.assets | keys[]' opengrep.json); do
             IFS=/ read -r os arch variant <<< "$target"
-            tags=bundled name=gogrep_${os}_${arch} ext=
-            [ -n "$variant" ] && tags="$tags,$variant" name="${name}_$variant"
+            tags=gogrep_bundled name=gogrep_${os}_${arch} ext=
+            [ -n "$variant" ] && tags="$tags,gogrep_$variant" name="${name}_$variant"
             [ "$os" = windows ] && ext=.exe
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
               go build -tags "$tags" -trimpath -ldflags "-s -w" \
-              -o "dist/$name$ext" .
+              -o "dist/$name$ext" ./cmd/gogrep
           done
           cp LICENSE NOTICE.md dist/
           (cd dist && sha256sum * > checksums.txt)
@@ -56,3 +57,27 @@ jobs:
         with:
           name: gogrep
           path: dist/
+
+  smoke:
+    # Once a release is tagged, an importer that gets it through
+    # proxy.golang.org builds and scans with it (testdata/consumer).
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Get the release as an importer would, and test with it
+        run: |
+          cp -R testdata/consumer "$RUNNER_TEMP/consumer"
+          cd "$RUNNER_TEMP/consumer"
+          go mod edit -dropreplace=github.com/odipar/gogrep -droprequire=github.com/odipar/gogrep
+          go get "github.com/odipar/gogrep@$GITHUB_REF_NAME"
+          go vet ./... && go build ./...
+          GOGREP_TEST_DOWNLOAD=1 go test -v ./...

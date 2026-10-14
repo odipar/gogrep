@@ -1,21 +1,17 @@
-package gogrep
+package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"os"
 	"slices"
 	"strings"
-)
 
-// toolName replaces opengrep's tool.driver.name in SARIF output, so GitHub
-// code scanning lists the results under gogrep.
-const toolName = "gogrep"
+	"github.com/odipar/gogrep/internal/sarif"
+)
 
 // sarifTargets reports where opengrep will write SARIF for args: the files it
 // writes to, and whether SARIF goes to stdout.
 func sarifTargets(args []string) (files []string, toStdout bool) {
-	sarif := slices.Contains(args, "--sarif")
+	asked := slices.Contains(args, "--sarif")
 	var output string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -39,7 +35,7 @@ func sarifTargets(args []string) (files []string, toStdout bool) {
 			files = append(files, strings.TrimPrefix(a, "--sarif-output="))
 		}
 	}
-	if sarif {
+	if asked {
 		if output == "" {
 			toStdout = true
 		} else {
@@ -53,35 +49,40 @@ func sarifTargets(args []string) (files []string, toStdout bool) {
 	return files, toStdout
 }
 
-// rebrandFile rewrites the SARIF file at path in place with rebrand.
-func rebrandFile(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	out, err := rebrand(data)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, out, 0o600)
-}
-
-// rebrand sets tool.driver.name to toolName in every run of a SARIF log,
-// leaving all other fields untouched.
-func rebrand(data []byte) ([]byte, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	var log map[string]any
-	if err := dec.Decode(&log); err != nil {
-		return nil, err
-	}
-	runs, _ := log["runs"].([]any)
-	for _, r := range runs {
-		run, _ := r.(map[string]any)
-		tool, _ := run["tool"].(map[string]any)
-		if driver, ok := tool["driver"].(map[string]any); ok {
-			driver["name"] = toolName
+// writesNoResults reports whether args, before any "--", ask opengrep for
+// something other than results, for which it writes no SARIF even with
+// --sarif: help, its version, a check of rules (--validate, --test), the
+// AST of a file, or a listing of languages or targets.
+func writesNoResults(args []string) bool {
+	for _, a := range args {
+		switch {
+		case a == "--":
+			return false
+		case a == "-h" || a == "--help" || strings.HasPrefix(a, "--help=") || a == "--version" ||
+			a == "--validate" || a == "--test" || a == "--dump-ast" ||
+			a == "--show-supported-languages" || a == "--x-ls" || a == "--x-ls-long":
+			return true
 		}
 	}
-	return json.Marshal(log)
+	return false
+}
+
+// rebrandFile rewrites the SARIF file at path in place with sarif.Rebrand,
+// and makes it readable by its owner only: opengrep creates it 0o644, and
+// os.WriteFile keeps the mode of a file that exists. valid reports whether
+// the file held the SARIF 2.1.0 log of one run that gogrep asks for.
+func rebrandFile(path string) (valid bool, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	valid = sarif.Check(data) == nil
+	out, err := sarif.Rebrand(data)
+	if err != nil {
+		return valid, err
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		return valid, err
+	}
+	return valid, os.Chmod(path, 0o600)
 }

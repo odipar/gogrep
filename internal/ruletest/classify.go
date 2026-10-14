@@ -3,6 +3,8 @@ package ruletest
 import (
 	"fmt"
 	"strings"
+
+	"github.com/odipar/gogrep/internal/sarif"
 )
 
 // A Stage is where a test failed.
@@ -37,7 +39,7 @@ func Classify(out Output, ruleID string, samples []string) (table []byte, stage 
 	if out.Err != nil {
 		return nil, StageRun, append([]string{"running opengrep: " + out.Err.Error()}, tail(out.Stderr)...)
 	}
-	log, err := DecodeSARIF(out.Stdout)
+	log, err := sarif.Decode(out.Stdout)
 	if err == nil {
 		table, err = Render(log, samples)
 	}

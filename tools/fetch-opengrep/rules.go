@@ -5,7 +5,9 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -13,76 +15,24 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/odipar/gogrep/internal/pin"
 )
 
-// rulesPin pins a GitHub rule repository to a git commit; git's content
-// addressing guarantees what we get.
-type rulesPin struct {
-	Name   string `json:"name"` // rule set name, used in --gogrep-ruleset
-	Repo   string `json:"repo"` // GitHub owner/name
-	Commit string `json:"commit"`
-	Path   string `json:"path,omitempty"` // repo subdirectory holding the rules
-	Lang   string `json:"lang,omitempty"` // language dir to file rules under, if the repo has none
-}
-
 // fetchRules clones the pinned rules commit and packs its rule files, plus
-// LICENSE, into the deterministic archive outDir/rules/<name>.tar.gz.
-func fetchRules(pin rulesPin) error {
-	if pin.Name == "" || strings.ContainsAny(pin.Name, `/\.`) {
-		return fmt.Errorf("invalid rule set name %q", pin.Name)
-	}
-	dir := filepath.Join(outDir, "rules")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	out := filepath.Join(dir, pin.Name+".tar.gz")
-	stamp := filepath.Join(dir, pin.Name+".commit")
-	want := pin.Commit + " " + pin.Path + " " + pin.Lang
+// LICENSE, into the deterministic archive rulesDir/<name>.tar.gz, next to the
+// stamp <name>.commit.
+func fetchRules(set pin.RuleSet) error {
+	out := filepath.Join(rulesDir, set.Name+".tar.gz")
+	stamp := filepath.Join(rulesDir, set.Name+".commit")
+	want := set.Stamp()
 	if got, err := os.ReadFile(stamp); err == nil && string(got) == want {
 		if _, err := os.Stat(out); err == nil {
-			fmt.Printf("rules: %s@%.12s already present\n", pin.Repo, pin.Commit)
+			fmt.Printf("rules: %s@%.12s already present\n", set.Repo, set.Commit)
 			return nil
 		}
 	}
-
-	tmp, err := os.MkdirTemp("", "opengrep-rules-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmp)
-
-	fmt.Printf("rules: fetching %s@%s\n", pin.Repo, pin.Commit)
-	git := func(args ...string) (string, error) {
-		cmd := exec.Command("git", append([]string{"-C", tmp}, args...)...)
-		cmd.Stderr = os.Stderr
-		b, err := cmd.Output()
-		return strings.TrimSpace(string(b)), err
-	}
-	for _, args := range [][]string{
-		{"init", "-q"},
-		{"fetch", "-q", "--depth", "1", "https://github.com/" + pin.Repo, pin.Commit},
-		{"checkout", "-q", "FETCH_HEAD"},
-	} {
-		if _, err := git(args...); err != nil {
-			return fmt.Errorf("rules: git %s: %w", args[0], err)
-		}
-	}
-	if head, err := git("rev-parse", "HEAD"); err != nil || head != pin.Commit {
-		return fmt.Errorf("rules: checked out %q, pinned %s (%v)", head, pin.Commit, err)
-	}
-
-	files, err := ruleFiles(tmp, pin.Path, pin.Lang)
-	if err != nil {
-		return err
-	}
-	if len(files) == 0 {
-		return fmt.Errorf("no rule files found in %s/%s", pin.Repo, pin.Path)
-	}
-	n := len(files)
-	for _, l := range licenseFiles(tmp) {
-		files = append(files, entry{name: l, src: l})
-	}
-	data, err := tarGz(tmp, files)
+	data, n, err := packRules(set)
 	if err != nil {
 		return err
 	}
@@ -91,6 +41,122 @@ func fetchRules(pin rulesPin) error {
 	}
 	fmt.Printf("rules: packed %d rule files (%d KB)\n", n, len(data)/1024)
 	return os.WriteFile(stamp, []byte(want), 0o600)
+}
+
+// checkRules packs the pinned rules commit again and checks that the
+// committed archive holds the same files with the same contents, and that its
+// stamp is the pin's. It compares what the archives hold, not their bytes,
+// which compress/flate does not promise to keep across Go releases.
+func checkRules(set pin.RuleSet) error {
+	if got, err := os.ReadFile(filepath.Join(rulesDir, set.Name+".commit")); err != nil || string(got) != set.Stamp() {
+		return fmt.Errorf("the stamp %s.commit is %q (%v), want %q", set.Name, got, err, set.Stamp())
+	}
+	committed, err := os.ReadFile(filepath.Join(rulesDir, set.Name+".tar.gz"))
+	if err != nil {
+		return err
+	}
+	have, err := listing(committed)
+	if err != nil {
+		return fmt.Errorf("%s.tar.gz: %w", set.Name, err)
+	}
+	packed, _, err := packRules(set)
+	if err != nil {
+		return err
+	}
+	want, err := listing(packed)
+	if err != nil {
+		return err
+	}
+	if !slices.Equal(have, want) {
+		var diff []string
+		for _, l := range have {
+			if !slices.Contains(want, l) {
+				diff = append(diff, "  committed only: "+l)
+			}
+		}
+		for _, l := range want {
+			if !slices.Contains(have, l) {
+				diff = append(diff, "  pinned commit only: "+l)
+			}
+		}
+		if len(diff) == 0 {
+			diff = append(diff, "  the same files in another order")
+		}
+		return fmt.Errorf("%s.tar.gz differs from %s@%s; run go run ./tools/fetch-opengrep and commit the result:\n%s",
+			set.Name, set.Repo, set.Commit, strings.Join(diff, "\n"))
+	}
+	fmt.Printf("rules: %s.tar.gz matches %s@%.12s (%d files)\n", set.Name, set.Repo, set.Commit, len(have))
+	return nil
+}
+
+// listing returns what a rule set archive holds, in order: each entry's name,
+// mode and SHA-256.
+func listing(archive []byte) ([]string, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		return nil, err
+	}
+	var entries []string
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return entries, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		h := sha256.New()
+		if _, err := io.Copy(h, tr); err != nil {
+			return nil, err
+		}
+		entries = append(entries, fmt.Sprintf("%s %o %x", hdr.Name, hdr.Mode, h.Sum(nil)))
+	}
+}
+
+// packRules clones the pinned rules commit and returns the deterministic
+// archive of its rule files and license files, and how many rule files it
+// holds.
+func packRules(set pin.RuleSet) ([]byte, int, error) {
+	tmp, err := os.MkdirTemp("", "opengrep-rules-*")
+	if err != nil {
+		return nil, 0, err
+	}
+	defer os.RemoveAll(tmp)
+
+	fmt.Printf("rules: fetching %s@%s\n", set.Repo, set.Commit)
+	git := func(args ...string) (string, error) {
+		cmd := exec.Command("git", append([]string{"-C", tmp}, args...)...)
+		cmd.Stderr = os.Stderr
+		b, err := cmd.Output()
+		return strings.TrimSpace(string(b)), err
+	}
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"fetch", "-q", "--depth", "1", "https://github.com/" + set.Repo, set.Commit},
+		{"checkout", "-q", "FETCH_HEAD"},
+	} {
+		if _, err := git(args...); err != nil {
+			return nil, 0, fmt.Errorf("rules: git %s: %w", args[0], err)
+		}
+	}
+	if head, err := git("rev-parse", "HEAD"); err != nil || head != set.Commit {
+		return nil, 0, fmt.Errorf("rules: checked out %q, pinned %s (%v)", head, set.Commit, err)
+	}
+
+	files, err := ruleFiles(tmp, set.Path, set.Lang)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(files) == 0 {
+		return nil, 0, fmt.Errorf("no rule files found in %s/%s", set.Repo, set.Path)
+	}
+	n := len(files)
+	for _, l := range licenseFiles(tmp) {
+		files = append(files, entry{name: l, src: l})
+	}
+	data, err := tarGz(tmp, files)
+	return data, n, err
 }
 
 // licenseFiles returns the license and notice files at the repo root, which

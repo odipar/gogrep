@@ -52,8 +52,7 @@ func ParseRef(data []byte) (string, error) {
 // slash path such as go/net: the one rule among all whose qualified id is
 // ref, project.<namespace>.<ref> (with dots for the namespace's slashes) or
 // project.<ref>. Ids compare exactly, never as suffixes. When no rule
-// matches, the error suggests the rules whose id ends in .<ref>, and notes
-// when all holds no bundled rules (rules outside the project and gogrep sets).
+// matches, the error suggests the rules whose id ends in .<ref>.
 func Resolve(ref, namespace string, all []*rules.Rule) (*rules.Rule, error) {
 	ids := []string{ref, "project." + ref}
 	if namespace != "" {
@@ -77,13 +76,9 @@ func Resolve(ref, namespace string, all []*rules.Rule) (*rules.Rule, error) {
 	msg := fmt.Sprintf("rule reference %q matches no rule", ref)
 	var near []string
 	suffix := "." + strings.ToLower(ref)
-	bundled := false
 	for _, r := range all {
 		if strings.HasSuffix(strings.ToLower(r.ID), suffix) {
 			near = append(near, r.ID)
-		}
-		if r.Set != "project" && r.Set != "gogrep" {
-			bundled = true
 		}
 	}
 	if len(near) > 0 {
@@ -91,8 +86,5 @@ func Resolve(ref, namespace string, all []*rules.Rule) (*rules.Rule, error) {
 		msg += "; did you mean " + strings.Join(near[:min(len(near), maxSuggestions)], ", ") + "?"
 	}
 	msg += fmt.Sprintf("; list candidates with: gogrep rules --rule '/%s/'", ref)
-	if !bundled {
-		msg += "; this gogrep build has no bundled rule sets"
-	}
 	return nil, errors.New(msg)
 }

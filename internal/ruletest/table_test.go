@@ -7,8 +7,9 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
-	"strings"
 	"testing"
+
+	"github.com/odipar/gogrep/internal/sarif"
 )
 
 // The SARIF logs in testdata/sarif are opengrep 1.30.2's stdout for the argv
@@ -47,72 +48,22 @@ import (
 
 const testRuleID = "project.go.no-exec-command"
 
-// recorded returns the SARIF log and exit code recorded as name.
-func recorded(t *testing.T, name string) (*Log, int) {
+// recorded returns the SARIF log recorded as name.
+func recorded(t *testing.T, name string) *sarif.Log {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", "sarif", name+".json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	log, err := DecodeSARIF(data)
+	log, err := sarif.Decode(data)
 	if err != nil {
-		t.Fatalf("DecodeSARIF(%s.json): %v", name, err)
+		t.Fatalf("Decode(%s.json): %v", name, err)
 	}
-	exit, err := os.ReadFile(filepath.Join("testdata", "sarif", name+".exit"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, err := strconv.Atoi(strings.TrimSpace(string(exit)))
-	if err != nil {
-		t.Fatalf("%s.exit: %v", name, err)
-	}
-	return log, code
-}
-
-// TestDecodeSARIFRecorded pins down what opengrep reports in each recorded
-// run, which classifying a run relies on.
-func TestDecodeSARIFRecorded(t *testing.T) {
-	tests := []struct {
-		name    string
-		code    int
-		rules   []string
-		results int
-		notes   []string // level and descriptor id of each notification
-	}{
-		{"results", 0, []string{testRuleID}, 5, []string{"warning Syntax error"}},
-		{"multiline-message", 0, []string{testRuleID}, 6, nil},
-		{"invalid-schema", 7, nil, 0, []string{"error InvalidRuleSchemaError", "error SemgrepError"}},
-		{"bad-pattern", 2, nil, 0, []string{"error Rule parse error"}},
-		{"unknown-language", 8, nil, 0, []string{"error UnknownLanguageError"}},
-		{"file-not-found", 2, nil, 0, []string{"error SemgrepError"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			log, code := recorded(t, tt.name)
-			run := log.Runs[0]
-			var rules, notes []string
-			for _, r := range run.Tool.Driver.Rules {
-				rules = append(rules, r.ID)
-			}
-			for _, inv := range run.Invocations {
-				for _, n := range inv.ToolExecutionNotifications {
-					notes = append(notes, n.Level+" "+n.Descriptor.ID)
-				}
-			}
-			if code != tt.code || !slices.Equal(rules, tt.rules) || len(run.Results) != tt.results || !slices.Equal(notes, tt.notes) {
-				t.Errorf("%s: exit %d, rules %q, %d results, notifications %q; want exit %d, rules %q, %d results, notifications %q",
-					tt.name, code, rules, len(run.Results), notes, tt.code, tt.rules, tt.results, tt.notes)
-			}
-			for _, r := range run.Results {
-				if r.RuleID != testRuleID {
-					t.Errorf("%s: result rule id %q, want %q", tt.name, r.RuleID, testRuleID)
-				}
-			}
-		})
-	}
+	return log
 }
 
 func TestRenderRecorded(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		samples []string
@@ -122,7 +73,7 @@ func TestRenderRecorded(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			log, _ := recorded(t, tt.name)
+			log := recorded(t, tt.name)
 			want, err := os.ReadFile(filepath.Join("testdata", "sarif", tt.name+".txt"))
 			if err != nil {
 				t.Fatal(err)
@@ -138,9 +89,9 @@ func TestRenderRecorded(t *testing.T) {
 	}
 
 	// Without sub/broken.go, the §2.4 run gives the plain expected.txt.
-	log, _ := recorded(t, "results")
+	log := recorded(t, "results")
 	run := &log.Runs[0]
-	run.Results = slices.DeleteFunc(run.Results, func(r Result) bool {
+	run.Results = slices.DeleteFunc(run.Results, func(r sarif.Result) bool {
 		return r.Locations[0].PhysicalLocation.ArtifactLocation.URI == "sub/broken.go"
 	})
 	run.Invocations = nil
@@ -193,6 +144,7 @@ func sarifLog(results []any, notes []any) []byte {
 }
 
 func TestRender(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		results, notes []any
@@ -263,9 +215,9 @@ func TestRender(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			log, err := DecodeSARIF(sarifLog(tt.results, tt.notes))
+			log, err := sarif.Decode(sarifLog(tt.results, tt.notes))
 			if err != nil {
-				t.Fatalf("DecodeSARIF: %v", err)
+				t.Fatalf("Decode: %v", err)
 			}
 			samples := []string{"B.go", "a.go", "a/b.go", "a2.go", "b.go", "sub dir/a%20b|c.go", "sub/a.go"}
 			got, err := Render(log, samples)
@@ -280,6 +232,7 @@ func TestRender(t *testing.T) {
 }
 
 func TestRenderErrors(t *testing.T) {
+	t.Parallel()
 	region := `"region":{"startLine":1,"startColumn":1,"endLine":1,"endColumn":2}`
 	tests := []struct {
 		name, result, err string
@@ -303,9 +256,9 @@ func TestRenderErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			data := `{"version":"2.1.0","runs":[{"results":[` + tt.result + `]}]}`
-			log, err := DecodeSARIF([]byte(data))
+			log, err := sarif.Decode([]byte(data))
 			if err != nil {
-				t.Fatalf("DecodeSARIF(%s): %v", data, err)
+				t.Fatalf("Decode(%s): %v", data, err)
 			}
 			got, err := Render(log, []string{"a.go", "sub/a.go"})
 			if got != nil || errText(err) != tt.err {
@@ -315,31 +268,8 @@ func TestRenderErrors(t *testing.T) {
 	}
 }
 
-func TestDecodeSARIFErrors(t *testing.T) {
-	tests := []struct {
-		name, data, err string // err is a prefix of the error
-	}{
-		{"empty", "", "output is not a SARIF log: "},
-		{"text", "Opengrep crashed\n", "output is not a SARIF log: "},
-		{"two documents", `{"version":"2.1.0","runs":[{}]}{}`, "output is not a SARIF log: "},
-		{"wrong type", `{"version":"2.1.0","runs":[{"results":[{"locations":[{"physicalLocation":{"region":{"startLine":"1"}}}]}]}]}`,
-			"output is not a SARIF log: "},
-		{"no version", `{"runs":[{}]}`, `output is not a SARIF 2.1.0 log (version "")`},
-		{"old version", `{"version":"2.0.0","runs":[{}]}`, `output is not a SARIF 2.1.0 log (version "2.0.0")`},
-		{"no runs", `{"version":"2.1.0","runs":[]}`, "SARIF log has 0 runs, want 1"},
-		{"two runs", `{"version":"2.1.0","runs":[{},{}]}`, "SARIF log has 2 runs, want 1"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			log, err := DecodeSARIF([]byte(tt.data))
-			if log != nil || err == nil || !strings.HasPrefix(err.Error(), tt.err) {
-				t.Errorf("DecodeSARIF(%q) = %v, %q; want nil, %q...", tt.data, log, errText(err), tt.err)
-			}
-		})
-	}
-}
-
 func TestEscape(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ in, want string }{
 		{"plain text", "plain text"},
 		{"bad a|b\n\tc", `bad a\|b\n\tc`},
@@ -362,6 +292,7 @@ func TestEscape(t *testing.T) {
 }
 
 func TestSamplePath(t *testing.T) {
+	t.Parallel()
 	samples := []string{"a.go", `a\b.txt`, "a/b.txt", "c:/x.txt", "sub/a.go"}
 	tests := []struct {
 		uri  string
@@ -406,12 +337,12 @@ func TestSamplePath(t *testing.T) {
 // On Unix, sample names may hold a backslash, and a directory may be named
 // like a Windows drive.
 func TestRenderUnixNames(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows forbids these file names")
 	}
 	dir := t.TempDir()
-	t.Chdir(dir)
-	fx := filepath.Join(testRoot, "x", "names")
+	fx := filepath.Join(dir, testRoot, "x", "names")
 	files := map[string]string{"rule.ref": "x\n", `a\b.txt`: "TODO\n", "a/b.txt": "TODO\n", "c:/x.txt": "TODO\n"}
 	for name, data := range files {
 		p := filepath.Join(fx, name)
@@ -422,7 +353,7 @@ func TestRenderUnixNames(t *testing.T) {
 			t.Skipf("file system forbids %q: %v", name, err)
 		}
 	}
-	fixtures, err := Discover(testRoot, nil)
+	fixtures, err := Discover(dir, testRoot, nil)
 	if err != nil || len(fixtures) != 1 || fixtures[0].Setup != nil {
 		t.Fatalf("Discover = %v, %v", fixtures, err)
 	}
@@ -434,7 +365,7 @@ func TestRenderUnixNames(t *testing.T) {
 	for _, s := range samples {
 		results = append(results, result(s, [4]int{1, 1, 1, 5}, "m"))
 	}
-	log, err := DecodeSARIF(sarifLog(results, nil))
+	log, err := sarif.Decode(sarifLog(results, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,6 +376,7 @@ func TestRenderUnixNames(t *testing.T) {
 }
 
 func TestSlashPaths(t *testing.T) {
+	t.Parallel()
 	samples := []string{"a.go", "sub/broken.go", "x/a.go", "y/x/a.go"}
 	tests := []struct {
 		name, msg string
@@ -468,6 +400,7 @@ func TestSlashPaths(t *testing.T) {
 }
 
 func TestNormalize(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		in   string
 		want []string

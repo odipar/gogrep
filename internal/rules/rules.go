@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -50,10 +51,13 @@ func FromTarGz(data []byte) (Set, error) {
 	}
 }
 
-// FromFS reads every file in fsys, except those under the directories whose
-// slash-separated paths are in skipDirs, in any letter case: on a
-// case-insensitive file system a Test directory is the test directory. A
-// skipped directory may also be a symlink, which WalkDir reports as a file.
+// FromFS reads every regular file in fsys, a symlink to one included,
+// except those under the directories whose slash-separated paths are in
+// skipDirs, in any letter case: on a case-insensitive file system a Test
+// directory is the test directory. A skipped directory may also be a
+// symlink, which WalkDir reports as a file. Like WalkDir, FromFS enters no
+// symlinked directory, and it reads no device or pipe, which could be
+// endless.
 func FromFS(fsys fs.FS, skipDirs ...string) (Set, error) {
 	set := Set{}
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
@@ -65,6 +69,15 @@ func FromFS(fsys fs.FS, skipDirs ...string) (Set, error) {
 			return fs.SkipDir
 		case skip, d.IsDir():
 			return nil
+		}
+		if !d.Type().IsRegular() {
+			fi, err := fs.Stat(fsys, p) // through a symlink
+			if err != nil {
+				return err
+			}
+			if !fi.Mode().IsRegular() {
+				return nil
+			}
 		}
 		set[p], err = fs.ReadFile(fsys, p)
 		return err
@@ -209,11 +222,16 @@ func fields(r *Rule, n *yaml.Node) map[string][]string {
 	return f
 }
 
-// Write writes rules to one opengrep config file under
-// <user cache>/gogrep/selections/, with each rule's id replaced by its
-// qualified ID, and returns its path. Run opengrep with --no-rewrite-rule-ids
-// to keep those ids. Identical selections share one file.
-func Write(rules []*Rule) (string, error) {
+// Write writes rules to one opengrep config file in the directory dir, with
+// each rule's id replaced by its qualified ID, and returns its path. Run
+// opengrep with --no-rewrite-rule-ids to keep those ids. Write changes no
+// rule. The file is named after its content, so identical selections share
+// one file: Write uses the file if it is there, refreshing its modification
+// time to mark it used, and otherwise writes a temporary file and renames it
+// into place. When the rename fails but the file is there by then, as when a
+// concurrent Write won the race, that file is used. dir is created 0o700 if
+// needed, and the file is 0o600.
+func Write(dir string, rules []*Rule) (string, error) {
 	seq := &yaml.Node{Kind: yaml.SequenceNode}
 	for _, r := range rules {
 		n := *r.node
@@ -232,15 +250,16 @@ func Write(rules []*Rule) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return write(dir, data, os.Rename)
+}
 
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
-	}
+// write writes data to the file in dir that is named after its SHA-256, as
+// Write describes, renaming the temporary file into place with rename.
+func write(dir string, data []byte, rename func(oldpath, newpath string) error) (string, error) {
 	sum := sha256.Sum256(data)
-	dir := filepath.Join(cache, "gogrep", "selections")
 	file := filepath.Join(dir, hex.EncodeToString(sum[:])[:16]+".yaml")
-	if _, err := os.Stat(file); err == nil {
+	if isRegular(file) {
+		os.Chtimes(file, time.Time{}, time.Now()) // best effort: the file is used either way
 		return file, nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -258,5 +277,14 @@ func Write(rules []*Rule) (string, error) {
 	if err := tmp.Close(); err != nil {
 		return "", err
 	}
-	return file, os.Rename(tmp.Name(), file)
+	if err := rename(tmp.Name(), file); err != nil && !isRegular(file) {
+		return "", err
+	}
+	return file, nil
+}
+
+// isRegular reports whether file is a regular file.
+func isRegular(file string) bool {
+	fi, err := os.Stat(file)
+	return err == nil && fi.Mode().IsRegular()
 }
