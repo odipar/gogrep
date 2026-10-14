@@ -74,6 +74,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	switch sub {
 	case "test":
 		return c.runTest(args[1:], sel)
+	case "lint":
+		return c.runLint(args[1:], sel)
 	case "rules":
 		err = c.listRules(sel)
 	case "suites":
