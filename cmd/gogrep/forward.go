@@ -20,8 +20,9 @@ import (
 // in a process group of its own: the signals a terminal sends its
 // foreground group reach gogrep alone, which stops opengrep with every
 // process it started, says so and exits 130, and on Ctrl-Z stops it along
-// with itself. Every other command shares gogrep's process group and stdin,
-// as gogrep opengrep does.
+// with itself where a job-control shell can continue them (passJobControl).
+// Every other command shares gogrep's process group and stdin, as gogrep
+// opengrep does.
 func (c *cli) forward(args []string, sel selection) int {
 	args, inject := withRules(args, sel)
 	opts := &gogrep.CommandOptions{}

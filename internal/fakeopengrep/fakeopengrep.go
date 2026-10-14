@@ -33,7 +33,8 @@ import (
 // comma-separated list, names on stderr as NAME=value; with
 // $GOGREP_TEST_FAKE_STDIN=1 it reports up to 4 bytes of its stdin there.
 // With $GOGREP_TEST_FAKE_WAIT set, it then creates that file and waits a
-// minute; with $GOGREP_TEST_FAKE_CHILD=1 too, it first starts sleep 60, as
+// minute, or until the file $GOGREP_TEST_FAKE_RESUME exists, if that is set;
+// with $GOGREP_TEST_FAKE_CHILD=1 too, it first starts sleep 60, as
 // opengrep's launcher starts opengrep-cli and opengrep-core, and writes its
 // pid there.
 //
@@ -77,7 +78,10 @@ func Main(args []string) int {
 		if os.WriteFile(p+".tmp", pid, 0o600) != nil || os.Rename(p+".tmp", p) != nil {
 			return 2
 		}
-		time.Sleep(time.Minute)
+		resume := os.Getenv("GOGREP_TEST_FAKE_RESUME")
+		for end := time.Now().Add(time.Minute); time.Now().Before(end) && !exists(resume); {
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 	files, toStdout := targets(args)
 	if !slices.Contains(args, "--sarif") {
@@ -116,6 +120,12 @@ func Main(args []string) int {
 	fmt.Fprintln(os.Stderr, "fake stderr")
 	code, _ := strconv.Atoi(os.Getenv("GOGREP_TEST_FAKE_EXIT"))
 	return code
+}
+
+// exists reports whether the file path exists; "" never does.
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return path != "" && err == nil
 }
 
 // targets returns where opengrep writes SARIF for args: the files, and

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -23,12 +24,16 @@ import (
 // TestMain lets the test binary stand in for opengrep: run as $OPENGREP_BIN
 // with GOGREP_TEST_FAKE_OPENGREP=1, it is fakeopengrep.Main. Run with
 // GOGREP_TEST_SIGPROBE=1, it prints whether it started with SIGINT ignored.
-// Run with GOGREP_TEST_MAIN=1, which its children do not inherit, it is
-// gogrep.
+// Run with GOGREP_TEST_PARENT set, it is runParent. Run with
+// GOGREP_TEST_MAIN=1, which its children do not inherit, it is gogrep.
 func TestMain(m *testing.M) {
 	if os.Getenv("GOGREP_TEST_SIGPROBE") == "1" {
 		fmt.Println(signal.Ignored(os.Interrupt))
 		os.Exit(0)
+	}
+	if pid := os.Getenv("GOGREP_TEST_PARENT"); pid != "" {
+		os.Unsetenv("GOGREP_TEST_PARENT")
+		os.Exit(runParent(pid, os.Args[1:]))
 	}
 	if os.Getenv("GOGREP_TEST_MAIN") == "1" {
 		os.Unsetenv("GOGREP_TEST_MAIN")
@@ -38,6 +43,24 @@ func TestMain(m *testing.M) {
 		os.Exit(fakeopengrep.Main(os.Args[1:]))
 	}
 	os.Exit(m.Run())
+}
+
+// runParent runs args as a child that shares its process group and streams,
+// as make runs a command, writes the child's pid to the file pid, and
+// returns the child's exit code.
+func runParent(pid string, args []string) int {
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	if os.WriteFile(pid+".tmp", strconv.AppendInt(nil, int64(cmd.Process.Pid), 10), 0o600) != nil || os.Rename(pid+".tmp", pid) != nil {
+		cmd.Process.Kill()
+		return 2
+	}
+	cmd.Wait()
+	return cmd.ProcessState.ExitCode()
 }
 
 // newTestCLI returns the cli that run would use, which discards its output.
