@@ -114,6 +114,7 @@ func ExampleEngine_Suites() {
 	// Output:
 	// all
 	// code-scanning (default)
+	// rule-lint
 	// security-and-quality
 	// security-extended
 }

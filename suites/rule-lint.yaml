@@ -1,0 +1,4 @@
+- description: Rule-quality checks for opengrep rule files; gogrep lint runs it
+- rules: bundled
+- include:
+    id: /^opengrep-rules\.yaml\.semgrep\./
