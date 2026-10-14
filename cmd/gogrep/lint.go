@@ -19,8 +19,8 @@ import (
 const lintUsage = `Usage:
   gogrep lint [--suite NAME] [--sarif] [path...]   check opengrep rule files
 
-Paths are rule files and directories relative to the current directory
-(default opengrep/gogrep/rules). The rule test fixtures under
+Paths are rule files and directories relative to, and inside, the current
+directory (default opengrep/gogrep/rules). The rule test fixtures under
 opengrep/gogrep/rules/test are never linted.
 
 Flags:
@@ -101,7 +101,11 @@ func (c *cli) runLint(args []string, sel selection) int {
 	}
 	// opengrep reports a missing path only once it has run, as exit code 2.
 	for _, p := range paths {
-		if _, err := os.Stat(filepath.Join(c.dir, p)); filepath.IsLocal(p) && errors.Is(err, fs.ErrNotExist) {
+		if !filepath.IsLocal(p) {
+			fmt.Fprintf(c.stderr, "gogrep: %s is not a relative path inside the current directory\n", p)
+			return 2
+		}
+		if _, err := os.Stat(filepath.Join(c.dir, p)); errors.Is(err, fs.ErrNotExist) {
 			fmt.Fprintf(c.stderr, "gogrep: %s does not exist\n", p)
 			return 2
 		}

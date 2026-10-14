@@ -20,7 +20,8 @@ const LintSuite = "rule-lint"
 // ProjectRulesDir of the directory with LintSuite.
 type LintOptions struct {
 	// Paths are the files and directories to lint, relative to the
-	// directory. Empty means ProjectRulesDir.
+	// directory and inside it (filepath.IsLocal), as ScanOptions.Targets.
+	// Empty means ProjectRulesDir.
 	Paths []string
 
 	// Suite is the lint suite; "" means LintSuite. A project suite of the
@@ -37,8 +38,9 @@ type LintOptions struct {
 // errors. It never lints the rule test fixtures under ProjectTestsDir, whose
 // samples may be YAML; a path inside it is an error.
 //
-// Errors are Scan's, plus a plain error naming ProjectRulesDir when no
-// paths are given and dir has none.
+// Errors are Scan's, plus plain errors for a path that is not a relative
+// path inside dir or lies in ProjectTestsDir, and one naming ProjectRulesDir
+// when no paths are given and dir has none.
 func (e *Engine) Lint(ctx context.Context, dir string, opts *LintOptions) (*Result, error) {
 	if opts == nil {
 		opts = &LintOptions{}
@@ -54,6 +56,9 @@ func (e *Engine) Lint(ctx context.Context, dir string, opts *LintOptions) (*Resu
 		paths = []string{filepath.FromSlash(ProjectRulesDir)}
 	}
 	for _, p := range paths {
+		if !filepath.IsLocal(p) {
+			return nil, fmt.Errorf("lint path %q is not a relative path inside the directory", p)
+		}
 		if inFixtures(p) {
 			return nil, fmt.Errorf("%s holds rule test fixtures, which are not linted", p)
 		}

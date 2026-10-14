@@ -26,7 +26,7 @@ A new built-in suite, `suites/rule-lint.yaml`:
 gogrep lint [--suite NAME] [--sarif] [path...]
 ```
 
-- **Paths** are files or directories relative to the current directory. With none, `opengrep/gogrep/rules` is linted; if it does not exist, `gogrep lint` exits 2 with `no opengrep/gogrep/rules here; name the rules to lint`.
+- **Paths** are files or directories relative to, and inside, the current directory; another path, such as `../rules`, exits 2 with `../rules is not a relative path inside the current directory`. With none, `opengrep/gogrep/rules` is linted; if it does not exist, `gogrep lint` exits 2 with `no opengrep/gogrep/rules here; name the rules to lint`.
 - **Fixtures are never linted:** `opengrep/gogrep/rules/test/` (the rule test fixtures, whose samples may be YAML) is excluded, as in every scan that uses gogrep's rules.
 - **`--suite NAME`** lints with another suite (default `rule-lint`, resolved like `--suite`, so a project's override applies).
 - **Output:** one line per finding, sorted by path, line, column and rule id:
@@ -43,8 +43,8 @@ gogrep lint [--suite NAME] [--sarif] [path...]
 // LintOptions are the options of Lint. The zero value lints
 // opengrep/gogrep/rules of dir with the rule-lint suite.
 type LintOptions struct {
-	// Paths are the files and directories to lint, relative to dir.
-	// Empty means opengrep/gogrep/rules.
+	// Paths are the files and directories to lint, relative to dir and
+	// inside it (filepath.IsLocal). Empty means opengrep/gogrep/rules.
 	Paths []string
 	// Suite is the lint suite; "" means "rule-lint". A project suite of the
 	// same name in dir overrides the built-in one.
@@ -59,7 +59,7 @@ type LintOptions struct {
 func (e *Engine) Lint(ctx context.Context, dir string, opts *LintOptions) (*Result, error)
 ```
 
-- Lint is Scan with a fixed selection (`Selection{Suites: []string{suite}}`), `Targets` set to the paths, and project rules not added. Errors are Scan's, plus a plain error naming `opengrep/gogrep/rules` when no paths are given and it does not exist.
+- Lint is Scan with a fixed selection (`Selection{Suites: []string{suite}}`), `Targets` set to the paths, and project rules not added. Errors are Scan's, plus plain errors for a path that is not a relative path inside dir (`lint path "../x" is not a relative path inside the directory`) or lies in the fixtures, and one naming `opengrep/gogrep/rules` when no paths are given and it does not exist.
 - The CLI's `gogrep lint` is a thin layer over `Lint`, as `scan` is over `Scan`.
 
 ## 4. CI and repository

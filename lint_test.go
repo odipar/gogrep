@@ -170,7 +170,8 @@ func TestLintFixtures(t *testing.T) {
 	}
 }
 
-// The directory and the paths are checked as Scan checks them.
+// The directory is checked as Scan checks it, and a path that is not
+// relative and inside it is refused, before opengrep is looked for.
 func TestLintArguments(t *testing.T) {
 	t.Parallel()
 	e := newFakeEngine(t)
@@ -193,11 +194,14 @@ func TestLintArguments(t *testing.T) {
 		}
 	}
 
-	for _, p := range []string{"../x", "", filepath.Join(dir, "main.go"), filepath.Join(dir, filepath.FromSlash(ProjectTestsDir))} {
-		_, err := e.Lint(ctx, dir, &LintOptions{Paths: []string{p}})
-		_, want := e.Scan(ctx, dir, &ScanOptions{Targets: []string{p}})
-		if err == nil || want == nil || err.Error() != want.Error() {
-			t.Errorf("Lint of %q = %v, want Scan's %v", p, err, want)
+	missing := newEngine(t, Config{Opengrep: filepath.Join(t.TempDir(), "opengrep")})
+	for _, p := range []string{"../x", "", "go/../../x", filepath.Join(dir, "main.go"), filepath.Join(dir, filepath.FromSlash(ProjectTestsDir))} {
+		for _, paths := range [][]string{{p}, {"opengrep/gogrep/rules", p}} {
+			res, err := missing.Lint(ctx, dir, &LintOptions{Paths: paths})
+			want := fmt.Sprintf("lint path %q is not a relative path inside the directory", p)
+			if res != nil || err == nil || err.Error() != want {
+				t.Errorf("Lint of %q = %v, %v; want no Result and %q", paths, res, err, want)
+			}
 		}
 	}
 }

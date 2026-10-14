@@ -512,9 +512,9 @@ $ gogrep lint
 No problems in 2 rule files.
 ```
 
-**Options.** Paths, relative to the current directory, name other rule
-files and directories to lint, e.g. `gogrep lint rules/`; a path among the
-rule test fixtures is an error. `--suite NAME` lints with another suite, and
+**Options.** Paths, relative to and inside the current directory, name
+other rule files and directories to lint, e.g. `gogrep lint rules/`; a path
+among the rule test fixtures is an error. `--suite NAME` lints with another suite, and
 `--sarif` writes the problems to stdout as a SARIF log, without the summary.
 `gogrep lint` takes no other flags and passes none to opengrep. Exit codes:
 0 no problems, 1 problems found, 2 usage or setup error, such as no paths

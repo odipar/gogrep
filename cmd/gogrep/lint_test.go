@@ -73,7 +73,8 @@ func TestLintUsage(t *testing.T) {
 		{[]string{"lint", "--suite", "nope"}, 2, "", "gogrep: unknown suite \"nope\"; list them with: gogrep suites\n"},
 		{[]string{"lint", "nope.yaml"}, 2, "", "gogrep: nope.yaml does not exist\n"},
 		{[]string{"lint", "opengrep/gogrep/rules", "nope"}, 2, "", "gogrep: nope does not exist\n"},
-		{[]string{"lint", "../x"}, 2, "", "gogrep: scan target \"../x\" is not a relative path inside the directory\n"},
+		{[]string{"lint", "../x"}, 2, "", "gogrep: ../x is not a relative path inside the current directory\n"},
+		{[]string{"lint", "opengrep/gogrep/rules", dir}, 2, "", "gogrep: " + dir + " is not a relative path inside the current directory\n"},
 		{[]string{"lint", testRoot}, 2, "", "gogrep: opengrep/gogrep/rules/test holds rule test fixtures, which are not linted\n"},
 	}
 	for _, tt := range tests {
