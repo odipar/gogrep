@@ -60,7 +60,8 @@ func unpackHelper() int {
 
 // unpacker returns the test binary as the opengrep that unpackHelper stands
 // in for: its path, its SHA-256 and an environment that has it record its
-// runs in the directory runs, with env added.
+// runs in the directory runs, with env added. Its own XDG_CACHE_HOME is a
+// new directory, where a runtime kept in place is unpacked.
 func unpacker(t *testing.T, env ...string) (exe, sum string, environ []string, runs string) {
 	t.Helper()
 	exe, err := os.Executable()
@@ -71,7 +72,7 @@ func unpacker(t *testing.T, env ...string) (exe, sum string, environ []string, r
 		t.Fatal(err)
 	}
 	runs = t.TempDir()
-	return exe, sum, append(append(os.Environ(), "GOGREP_TEST_HELPER=unpack", "GOGREP_TEST_RUNS="+runs), env...), runs
+	return exe, sum, append(append(os.Environ(), "GOGREP_TEST_HELPER=unpack", "GOGREP_TEST_RUNS="+runs, "XDG_CACHE_HOME="+t.TempDir()), env...), runs
 }
 
 // countRuns returns how many runs recorded themselves in runs, and whether
@@ -94,17 +95,25 @@ func countRuns(t *testing.T, runs string) (n int, overlap bool) {
 	return n, overlap
 }
 
-// checkPrepared checks that dir holds the runtime prepared for sum and,
-// apart from locks, nothing else.
-func checkPrepared(t *testing.T, dir, sum, xdg string) {
+// checkPrepared checks that dir holds the runtime prepared for sum in env
+// and, apart from locks, nothing else. A runtime kept in place is unpacked
+// in env's XDG_CACHE_HOME, and marked in dir.
+func checkPrepared(t *testing.T, dir, sum, xdg string, env []string) {
 	t.Helper()
 	ready := filepath.Join(dir, "runtime-"+sum[:16])
-	if runtime.GOOS == "windows" {
+	if staysInPlace(runtime.GOOS, dir) {
 		if xdg != "" {
-			t.Errorf("PrepareRuntime = %q, want \"\" on Windows", xdg)
+			t.Errorf("PrepareRuntime = %q, want \"\" for a runtime kept in place", xdg)
 		}
-		if fi, err := os.Stat(ready + ".ready"); err != nil || !fi.Mode().IsRegular() {
-			t.Errorf("no marker %s.ready: %v", ready, err)
+		if fi, err := os.Stat(ready + ".ready"); err != nil || !fi.Mode().IsRegular() || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+			t.Errorf("no marker %s.ready of mode 0600: %v", ready, err)
+		}
+		if data, err := os.ReadFile(ready + ".ready"); err != nil || string(data) != string(inPlaceMark(runtime.GOOS, env)) {
+			t.Errorf("the marker holds %q, %v; want %q", data, err, inPlaceMark(runtime.GOOS, env))
+		}
+		place := filepath.Join(lookup(env, "XDG_CACHE_HOME"), "opengrep", "v1.30.2", "Python")
+		if data, err := os.ReadFile(place); err != nil || string(data) != "runtime" {
+			t.Errorf("the runtime kept in place holds %q, %v; want the unpacked one", data, err)
 		}
 	} else {
 		if xdg != ready {
@@ -143,7 +152,7 @@ func TestPrepareRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkPrepared(t, dir, sum, xdg)
+	checkPrepared(t, dir, sum, xdg, env)
 	if runtime.GOOS != "windows" {
 		if _, err := os.Stat(filepath.Join(xdg, "log")); err == nil {
 			t.Errorf("the preparation's log is left in the runtime")
@@ -169,24 +178,26 @@ func TestPrepareRuntimeFails(t *testing.T) {
 		{"GOGREP_TEST_EXIT=3", "exit status 3"},
 		{"GOGREP_TEST_SILENT=1", "exited 0 but printed no version"},
 	} {
-		exe, sum, env, runs := unpacker(t, tt.env)
-		dir := t.TempDir()
-		var log bytes.Buffer
-		for i := 1; i <= 2; i++ {
-			xdg, err := PrepareRuntime(context.Background(), exe, sum, dir, env, slog.New(slog.NewTextHandler(&log, nil)))
-			if n, _ := countRuns(t, runs); xdg != "" || err != nil || n != i {
-				t.Errorf("PrepareRuntime of a failing opengrep (%s) = %q, %v after %d runs; want \"\" after %d", tt.env, xdg, err, n, i)
+		for _, name := range []string{"cache", "caché"} { // the runtime kept in place, in caché
+			exe, sum, env, runs := unpacker(t, tt.env)
+			dir := filepath.Join(t.TempDir(), name)
+			var log bytes.Buffer
+			for i := 1; i <= 2; i++ {
+				xdg, err := PrepareRuntime(context.Background(), exe, sum, dir, env, slog.New(slog.NewTextHandler(&log, nil)))
+				if n, _ := countRuns(t, runs); xdg != "" || err != nil || n != i {
+					t.Errorf("PrepareRuntime of a failing opengrep (%s) in %s = %q, %v after %d runs; want \"\" after %d", tt.env, name, xdg, err, n, i)
+				}
 			}
-		}
-		if !strings.Contains(log.String(), "could not prepare opengrep's runtime") || !strings.Contains(log.String(), tt.why) {
-			t.Errorf("PrepareRuntime (%s) logged\n%s\nwant why it failed", tt.env, log.String())
-		}
-		for _, name := range []string{"runtime-" + sum[:16], "runtime-" + sum[:16] + ".ready"} {
-			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
-				t.Errorf("a failed preparation (%s) published %s", tt.env, name)
+			if !strings.Contains(log.String(), "could not prepare opengrep's runtime") || !strings.Contains(log.String(), tt.why) {
+				t.Errorf("PrepareRuntime (%s) in %s logged\n%s\nwant why it failed", tt.env, name, log.String())
 			}
+			for _, name := range []string{"runtime-" + sum[:16], "runtime-" + sum[:16] + ".ready"} {
+				if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+					t.Errorf("a failed preparation (%s) published %s", tt.env, name)
+				}
+			}
+			checkNoTemp(t, dir)
 		}
-		checkNoTemp(t, dir)
 	}
 	exe, sum, env, _ := unpacker(t, "GOGREP_TEST_EXIT=3")
 
@@ -200,22 +211,86 @@ func TestPrepareRuntimeFails(t *testing.T) {
 	}
 }
 
-// Under a path that is not ASCII, where opengrep 1.30.2 runs nothing, no
-// runtime is prepared on Linux and macOS.
+// Under a cache directory that is not ASCII, where opengrep 1.30.2 runs no
+// command, its runtime stays where opengrep keeps it by itself, as on
+// Windows: the first run is serialised and marked in the cache directory,
+// for the variables that pick that place, so that a run with other ones
+// prepares its own.
 func TestPrepareRuntimeNotASCII(t *testing.T) {
 	t.Parallel()
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows keeps opengrep's runtime where opengrep does")
-	}
-	exe, sum, env, runs := unpacker(t)
+	exe, sum, env, runs := unpacker(t, "GOGREP_TEST_DELAY=200ms")
 	dir := filepath.Join(t.TempDir(), "caché")
 	var log bytes.Buffer
-	xdg, err := PrepareRuntime(context.Background(), exe, sum, dir, env, slog.New(slog.NewTextHandler(&log, nil)))
-	if n, _ := countRuns(t, runs); xdg != "" || err != nil || n != 0 {
-		t.Errorf("PrepareRuntime under %s = %q, %v after %d runs; want \"\" and no run", dir, xdg, err, n)
+	xdgs := make([]string, 8)
+	var wg sync.WaitGroup
+	for i := range xdgs {
+		wg.Go(func() {
+			var err error
+			if xdgs[i], err = PrepareRuntime(context.Background(), exe, sum, dir, env, slog.New(slog.NewTextHandler(&log, nil))); err != nil {
+				t.Error(err)
+			}
+		})
 	}
-	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) || !strings.Contains(log.String(), "not ASCII") {
-		t.Errorf("PrepareRuntime under %s created it (%v) or logged\n%s", dir, err, log.String())
+	wg.Wait()
+	if n, overlap := countRuns(t, runs); n != 1 || overlap {
+		t.Errorf("opengrep ran %d times, overlapping %v; want once", n, overlap)
+	}
+	for _, xdg := range xdgs {
+		checkPrepared(t, dir, sum, xdg, env)
+	}
+	if runtime.GOOS != "windows" && !strings.Contains(log.String(), "not ASCII") {
+		t.Errorf("PrepareRuntime under %s logged\n%s\nwant why it keeps the runtime in place", dir, log.String())
+	}
+	if xdg, err := PrepareRuntime(context.Background(), exe, sum, dir, env, slog.New(slog.DiscardHandler)); xdg != "" || err != nil {
+		t.Errorf("PrepareRuntime again = %q, %v; want \"\"", xdg, err)
+	}
+	if n, _ := countRuns(t, runs); n != 1 {
+		t.Errorf("opengrep ran %d times after PrepareRuntime of a prepared runtime; want once", n)
+	}
+
+	// Another place for opengrep's own runtime is prepared too.
+	other := append(slices.Clip(env), "XDG_CACHE_HOME="+t.TempDir())
+	if xdg, err := PrepareRuntime(context.Background(), exe, sum, dir, other, slog.New(slog.DiscardHandler)); xdg != "" || err != nil {
+		t.Errorf("PrepareRuntime with another XDG_CACHE_HOME = %q, %v; want \"\"", xdg, err)
+	}
+	want := 2
+	if runtime.GOOS == "windows" {
+		want = 1 // which no variable moves
+	}
+	if n, _ := countRuns(t, runs); n != want {
+		t.Errorf("opengrep ran %d times after PrepareRuntime with another XDG_CACHE_HOME; want %d", n, want)
+	}
+	if runtime.GOOS != "windows" {
+		checkPrepared(t, dir, sum, "", other)
+	}
+}
+
+// staysInPlace keeps opengrep's runtime where opengrep does on Windows, and
+// under a cache directory that is not ASCII.
+func TestStaysInPlace(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		goos, dir string
+		want      bool
+	}{
+		{"linux", "/home/u/.cache/gogrep", false},
+		{"darwin", "/Users/a b/Library/Caches/gogrep", false},
+		{"darwin", "/Users/josé/Library/Caches/gogrep", true},
+		{"linux", "/tmp/cache-\u00e9", true},
+		{"freebsd", "/tmp/キャッシュ", true},
+		{"windows", `C:\Users\u\AppData\Local\gogrep`, true},
+		{"windows", `C:\Users\josé\AppData\Local\gogrep`, true},
+	} {
+		if got := staysInPlace(tt.goos, tt.dir); got != tt.want {
+			t.Errorf("staysInPlace(%s, %s) = %v, want %v", tt.goos, tt.dir, got, tt.want)
+		}
+	}
+	env := []string{"HOME=/old", "XDG_CACHE_HOME=", "HOME=/home/u"}
+	if got, want := string(inPlaceMark("linux", env)), "XDG_CACHE_HOME=\nHOME=/home/u\n"; got != want {
+		t.Errorf("inPlaceMark(linux, %q) = %q, want %q", env, got, want)
+	}
+	if got := inPlaceMark("windows", env); got != nil {
+		t.Errorf("inPlaceMark(windows, %q) = %q, want nothing", env, got)
 	}
 }
 
@@ -254,7 +329,8 @@ func TestPrepareRuntimeCancelled(t *testing.T) {
 }
 
 // The first run of opengrep, which unpacks its runtime, runs alone: once
-// within a process, and once between processes.
+// within a process, and once between processes, also where the runtime is
+// kept in place.
 func TestRunFirstAlone(t *testing.T) {
 	t.Parallel()
 	t.Run("goroutines", func(t *testing.T) {
@@ -276,39 +352,46 @@ func TestRunFirstAlone(t *testing.T) {
 			t.Errorf("opengrep ran %d times, overlapping %v; want once", n, overlap)
 		}
 		for _, xdg := range xdgs {
-			checkPrepared(t, dir, sum, xdg)
+			checkPrepared(t, dir, sum, xdg, env)
 		}
 	})
 
-	t.Run("processes", func(t *testing.T) {
-		t.Parallel()
-		exe, sum, env, runs := unpacker(t, "GOGREP_TEST_DELAY=500ms")
-		dir := t.TempDir()
-		outs := make([][]byte, 2)
-		errs := make([]error, 2)
-		var wg sync.WaitGroup
-		for i := range outs {
-			wg.Go(func() {
-				cmd := exec.Command(exe, exe, sum, dir)
-				cmd.Env = append(slices.Clip(env), "GOGREP_TEST_HELPER=prepare")
-				outs[i], errs[i] = cmd.Output()
-			})
+	for _, name := range []string{"cache", "caché"} {
+		t.Run("processes in "+name, func(t *testing.T) {
+			t.Parallel()
+			runProcessesFirstAlone(t, filepath.Join(t.TempDir(), name))
+		})
+	}
+}
+
+// runProcessesFirstAlone checks that the first run of opengrep in the cache
+// directory dir runs once when two processes prepare its runtime at once.
+func runProcessesFirstAlone(t *testing.T, dir string) {
+	exe, sum, env, runs := unpacker(t, "GOGREP_TEST_DELAY=500ms")
+	outs := make([][]byte, 2)
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := range outs {
+		wg.Go(func() {
+			cmd := exec.Command(exe, exe, sum, dir)
+			cmd.Env = append(slices.Clip(env), "GOGREP_TEST_HELPER=prepare")
+			outs[i], errs[i] = cmd.Output()
+		})
+	}
+	wg.Wait()
+	if n, overlap := countRuns(t, runs); n != 1 || overlap {
+		t.Errorf("opengrep ran %d times, overlapping %v; want once", n, overlap)
+	}
+	want := filepath.Join(dir, "runtime-"+sum[:16]) + " <nil>\n"
+	if staysInPlace(runtime.GOOS, dir) {
+		want = " <nil>\n"
+	}
+	for i := range outs {
+		if errs[i] != nil || string(outs[i]) != want {
+			t.Errorf("process %d printed %q, %v; want %q", i, outs[i], errs[i], want)
 		}
-		wg.Wait()
-		if n, overlap := countRuns(t, runs); n != 1 || overlap {
-			t.Errorf("opengrep ran %d times, overlapping %v; want once", n, overlap)
-		}
-		want := filepath.Join(dir, "runtime-"+sum[:16]) + " <nil>\n"
-		if runtime.GOOS == "windows" {
-			want = " <nil>\n"
-		}
-		for i := range outs {
-			if errs[i] != nil || string(outs[i]) != want {
-				t.Errorf("process %d printed %q, %v; want %q", i, outs[i], errs[i], want)
-			}
-		}
-		checkPrepared(t, dir, sum, strings.TrimSuffix(string(outs[0]), " <nil>\n"))
-	})
+	}
+	checkPrepared(t, dir, sum, strings.TrimSuffix(string(outs[0]), " <nil>\n"), env)
 }
 
 // RemoveRuntime keeps a runtime that is being prepared, and leaves nothing

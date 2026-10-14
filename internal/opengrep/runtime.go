@@ -38,29 +38,28 @@ var preparing struct {
 // ones; runs that start meanwhile crash. On Linux and macOS, PrepareRuntime
 // therefore runs `exe --version` with XDG_CACHE_HOME set to a private
 // directory, and renames that into place as <dir>/runtime-<sha16> once it
-// exited 0; a later call only checks that it is there. Windows has no such
-// redirect: there it runs `exe --version` alone, which unpacks in place,
-// marks that done with <dir>/runtime-<sha16>.ready, and returns "". The
-// preparation is serialised within the process and, with a file lock,
-// between processes. env is the environment it runs in.
+// exited 0; a later call only checks that it is there. Where opengrep's
+// runtime cannot move into dir (see staysInPlace), on Windows and under a
+// dir that is not ASCII, PrepareRuntime runs `exe --version` alone, which
+// unpacks it where opengrep keeps it by itself, marks that done with
+// <dir>/runtime-<sha16>.ready, and returns "". The preparation is
+// serialised within the process and, with a file lock, between processes.
+// env is the environment it runs in.
 //
 // When the preparation fails, PrepareRuntime logs why to log and returns "",
 // so that opengrep runs as it would by itself and reports any real error;
 // when ctx is done, it returns ctx's error. A `--version` that exits 0 but
 // prints nothing has failed: opengrep 1.30.2 does that for every command
-// when its runtime is under a path that is not ASCII. On Linux and macOS,
-// PrepareRuntime therefore prepares nothing in such a dir, and returns "".
+// when its runtime is under a path that is not ASCII.
 func PrepareRuntime(ctx context.Context, exe, sum, dir string, env []string, log *slog.Logger) (string, error) {
 	key := sum[:16]
-	ready := filepath.Join(dir, "runtime-"+key)
-	if runtime.GOOS == "windows" {
-		ready += ".ready"
-	} else if !ascii(dir) {
-		log.Info("opengrep cannot run with its runtime under a path that is not ASCII; it runs without a prepared one", "dir", dir)
-		return "", nil
+	r := &place{path: filepath.Join(dir, "runtime-"+key)}
+	if staysInPlace(runtime.GOOS, dir) {
+		r.path += ".ready"
+		r.inPlace, r.mark = true, inPlaceMark(runtime.GOOS, env)
 	}
-	if isPrepared(ready) {
-		return xdgCache(ready), nil
+	if r.ready() {
+		return r.xdgCache(), nil
 	}
 
 	release, err := acquire(ctx, dir, sum)
@@ -68,8 +67,8 @@ func PrepareRuntime(ctx context.Context, exe, sum, dir string, env []string, log
 		return "", err
 	}
 	defer release()
-	if isPrepared(ready) {
-		return xdgCache(ready), nil
+	if r.ready() {
+		return r.xdgCache(), nil
 	}
 	start := time.Now()
 	unlock, err := lock(ctx, filepath.Join(dir, "locks", "runtime-"+key+".lock"))
@@ -82,16 +81,19 @@ func PrepareRuntime(ctx context.Context, exe, sum, dir string, env []string, log
 	} else if waited := time.Since(start); waited >= lockPoll {
 		log.Info("waited for another process preparing opengrep's runtime", "took", waited)
 	}
-	if isPrepared(ready) {
-		return xdgCache(ready), nil
+	if r.ready() {
+		return r.xdgCache(), nil
 	}
 
 	start = time.Now()
-	log.Info("preparing opengrep's runtime", "exe", exe, "dir", ready)
-	if runtime.GOOS == "windows" {
-		err = prepareInPlace(ctx, exe, dir, ready, env)
+	if r.inPlace && runtime.GOOS != "windows" {
+		log.Info("opengrep cannot run with its runtime under a path that is not ASCII; it unpacks it where it keeps it by itself", "dir", dir)
+	}
+	log.Info("preparing opengrep's runtime", "exe", exe, "dir", r.path)
+	if r.inPlace {
+		err = prepareInPlace(ctx, exe, dir, r, env)
 	} else {
-		err = unpack(ctx, exe, dir, ready, env)
+		err = unpack(ctx, exe, dir, r.path, env)
 	}
 	switch {
 	case ctx.Err() != nil:
@@ -100,13 +102,64 @@ func PrepareRuntime(ctx context.Context, exe, sum, dir string, env []string, log
 		log.Info("could not prepare opengrep's runtime; opengrep runs without it", "err", err)
 		return "", nil
 	}
-	log.Info("prepared opengrep's runtime", "dir", ready, "took", time.Since(start))
-	return xdgCache(ready), nil
+	log.Info("prepared opengrep's runtime", "dir", r.path, "took", time.Since(start))
+	return r.xdgCache(), nil
+}
+
+// staysInPlace reports whether opengrep's runtime stays where opengrep
+// keeps it by itself, instead of moving into the cache directory dir, on
+// the system goos: on Windows, where no environment variable redirects it,
+// and when dir is not ASCII, since opengrep 1.30.2 then unpacks its runtime
+// but runs no command, printing nothing and exiting 0 (under the UTF-8
+// locale that gogrep always sets).
+func staysInPlace(goos, dir string) bool {
+	return goos == "windows" || !ascii(dir)
+}
+
+// A place is where PrepareRuntime prepares a runtime: the directory path,
+// or for a runtime kept in place, the marker file path, which holds mark.
+type place struct {
+	path    string
+	inPlace bool
+	mark    []byte
+}
+
+// ready reports whether the runtime is prepared: its directory is there or,
+// for one kept in place, its marker holds mark. A marker written for
+// another location of opengrep's own runtime does not.
+func (r *place) ready() bool {
+	if !r.inPlace {
+		fi, err := os.Stat(r.path)
+		return err == nil && fi.IsDir()
+	}
+	data, err := os.ReadFile(r.path)
+	return err == nil && bytes.Equal(data, r.mark)
+}
+
+// xdgCache returns the XDG_CACHE_HOME for the prepared runtime: "" for one
+// kept in place.
+func (r *place) xdgCache() string {
+	if r.inPlace {
+		return ""
+	}
+	return r.path
+}
+
+// inPlaceMark returns what the marker of a runtime kept in place holds on
+// the system goos: on Linux and macOS, the variables of env that pick where
+// opengrep keeps it, $XDG_CACHE_HOME or else $HOME/.cache, so that a run
+// with another of them prepares that one; nothing on Windows, where it is
+// %LOCALAPPDATA%'s, which no environment variable moves.
+func inPlaceMark(goos string, env []string) []byte {
+	if goos == "windows" {
+		return nil
+	}
+	return fmt.Appendf(nil, "XDG_CACHE_HOME=%s\nHOME=%s\n", lookup(env, "XDG_CACHE_HOME"), lookup(env, "HOME"))
 }
 
 // RemoveRuntime removes name, a runtime that PrepareRuntime prepared in the
-// cache directory dir (runtime-<sha16>, or runtime-<sha16>.ready on
-// Windows), if stale reports true for it once RemoveRuntime holds the lock
+// cache directory dir (runtime-<sha16>, or the marker runtime-<sha16>.ready
+// of one kept in place), if stale reports true for it once RemoveRuntime holds the lock
 // that PrepareRuntime takes. A held lock means that the runtime is being
 // prepared, and it is kept. A runtime directory is first renamed into a new
 // temporary <dir>/.runtime-*, so that a run that starts meanwhile finds it
@@ -141,21 +194,6 @@ func RemoveRuntime(dir, name string, stale func(fs.FileInfo) bool) (bool, error)
 		return false, err
 	}
 	return true, os.RemoveAll(tmp)
-}
-
-// isPrepared reports whether ready, a runtime directory or, on Windows, a
-// marker file, is there.
-func isPrepared(ready string) bool {
-	fi, err := os.Stat(ready)
-	return err == nil && fi.IsDir() == (runtime.GOOS != "windows")
-}
-
-// xdgCache returns the XDG_CACHE_HOME for the prepared runtime ready.
-func xdgCache(ready string) string {
-	if runtime.GOOS == "windows" {
-		return ""
-	}
-	return ready
 }
 
 // acquire waits until no other goroutine prepares the runtime of the
@@ -198,15 +236,15 @@ func unpack(ctx context.Context, exe, dir, dst string, env []string) error {
 	if err := os.Remove(log); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := os.Rename(tmp, dst); err != nil && !isPrepared(dst) {
+	if err := os.Rename(tmp, dst); err != nil && !(&place{path: dst}).ready() {
 		return err
 	}
 	return nil
 }
 
 // prepareInPlace runs exe --version, which unpacks its runtime where
-// opengrep keeps it, and then creates the marker file ready in dir.
-func prepareInPlace(ctx context.Context, exe, dir, ready string, env []string) error {
+// opengrep keeps it, and then writes the marker of r in dir.
+func prepareInPlace(ctx context.Context, exe, dir string, r *place, env []string) error {
 	log, err := LogFile(dir)
 	if err != nil {
 		return err
@@ -215,11 +253,7 @@ func prepareInPlace(ctx context.Context, exe, dir, ready string, env []string) e
 	if err := runVersion(ctx, exe, append(slices.Clip(env), "SEMGREP_LOG_FILE="+log)); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(ready, os.O_WRONLY|os.O_CREATE, 0o600)
-	if err != nil {
-		return err
-	}
-	return f.Close()
+	return os.WriteFile(r.path, r.mark, 0o600)
 }
 
 // runVersion runs exe --version in env, within prepareTimeout, and checks

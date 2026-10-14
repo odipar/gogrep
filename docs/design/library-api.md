@@ -344,7 +344,7 @@ Every other behaviour, including all golden files and the injected argv apart fr
    - `gogrep install-opengrep [--from FILE] [--base-url URL]` fills the cache. Before, `install-opengrep` was passed to opengrep, which rejects it.
    - An unbundled gogrep that finds no opengrep now prints the not-installed message of §4.2 instead of `exec: "opengrep": executable file not found in $PATH`. The exit code is still 1.
 9. **opengrep's runtime moves under gogrep's cache** on Linux and macOS (§4.6).
-   - Every opengrep that gogrep starts, including `gogrep opengrep …`, gets `XDG_CACHE_HOME=<cache>/gogrep/runtime-<sha16>`, unless that path is not ASCII (§4.6).
+   - Every opengrep that gogrep starts, including `gogrep opengrep …`, gets `XDG_CACHE_HOME=<cache>/gogrep/runtime-<sha16>`, unless that path is not ASCII: the runtime then stays where opengrep keeps it, and its first run there is serialised, as on Windows (§4.6).
    - After upgrading, the first run unpacks once (about 8 s, 245 MB).
    - Parallel `gogrep` processes on a cold machine no longer crash: 2 of 4 died with SIGBUS in each of three trials before.
    - The preparation runs in a process group of its own, so the forwarded commands and `gogrep opengrep …` catch gogrep's interrupts while it runs: SIGINT or SIGTERM (plus SIGHUP and SIGQUIT on Unix) stop it, it removes its private directory, and gogrep prints `gogrep: interrupted` and exits 130. Only then do they ignore SIGINT and SIGTERM and start opengrep in gogrep's group, as before. Without this, a Ctrl-C during the silent first `gogrep --version` killed gogrep alone and orphaned the unpack, whose 245 MB `.runtime-*` stayed in the cache.
@@ -460,7 +460,10 @@ type Config struct {
 	// runtime is under a path that is not. Under such a CacheDir, gogrep
 	// leaves the runtime where opengrep keeps it by itself
 	// ($XDG_CACHE_HOME/opengrep or ~/.cache/opengrep, from Env), which must
-	// then be ASCII.
+	// then be ASCII, and, as on Windows, has one opengrep unpack it there
+	// alone, across goroutines and processes, so that concurrent first runs
+	// do not crash; runtime-<sha16>.ready in CacheDir then records for which
+	// XDG_CACHE_HOME and HOME that was done.
 	CacheDir string
 
 	// Env is the environment opengrep runs in, as in exec.Cmd.Env. nil
@@ -470,7 +473,8 @@ type Config struct {
 	// itself selects a UTF-8 locale (PYTHONUTF8=1 on Windows), since
 	// opengrep crashes on non-ASCII rules otherwise, and on Linux and macOS
 	// set XDG_CACHE_HOME to the runtime directory in CacheDir once it is
-	// prepared. opengrep runs git, which it finds through Env's PATH.
+	// prepared, unless CacheDir is not ASCII. opengrep runs git, which it
+	// finds through Env's PATH.
 	Env []string
 
 	// Logger receives gogrep's own records at Debug and Info level: which
@@ -518,9 +522,10 @@ type OpengrepInfo struct {
 // each path, size and modification time. The first time an executable is
 // used with a CacheDir, Opengrep unpacks opengrep's runtime (about 245 MB
 // and 8 s) privately and publishes it there, so that concurrent opengrep
-// processes never start from a half-written runtime. That opengrep runs in a
-// process group of its own, which a terminal's Ctrl-C does not reach, and
-// ctx stops it.
+// processes never start from a half-written runtime; on Windows, and under
+// a CacheDir that is not ASCII, it has that opengrep unpack it alone where
+// opengrep keeps it. That opengrep runs in a process group of its own,
+// which a terminal's Ctrl-C does not reach, and ctx stops it.
 //
 // Scan, Test and Command call Opengrep; call it yourself to fail early.
 // When no opengrep is found, it returns an error that wraps ErrNoOpengrep
@@ -1354,18 +1359,20 @@ No step uses the network.
 - `Logger` records why;
 - the real run then reports any real error.
 
-**Paths that are not ASCII.** Under a UTF-8 locale, which gogrep always sets, opengrep 1.30.2 unpacks its runtime but then runs no command, printing nothing and exiting 0, when `XDG_CACHE_HOME` is not ASCII (verified with `é`; a space is fine). Publishing on exit 0 alone made every later scan an `*OutputError` with an empty stderr. So a `--version` that prints nothing has failed, and on Linux and macOS a `CacheDir` that is not ASCII gets no runtime at all, without the 245 MB unpack that would fail on every run: opengrep then keeps its runtime where it does by itself (`$XDG_CACHE_HOME` or `$HOME/.cache`, from `Env`), which must be ASCII instead. A non-ASCII `HOME` broke v0.3.0 in the same way.
+**Paths that are not ASCII.** Under a UTF-8 locale, which gogrep always sets, opengrep 1.30.2 unpacks its runtime but then runs no command, printing nothing and exiting 0, when `XDG_CACHE_HOME` is not ASCII (verified with `é`; a space is fine). Publishing on exit 0 alone made every later scan an `*OutputError` with an empty stderr. So a `--version` that prints nothing has failed, and on Linux and macOS a `CacheDir` that is not ASCII gets no private runtime, without the 245 MB unpack that would fail on every run: opengrep keeps its runtime where it does by itself (`$XDG_CACHE_HOME` or `$HOME/.cache`, from `Env`), which must be ASCII instead. A non-ASCII `HOME` broke v0.3.0 in the same way.
+
+That runtime is prepared as on Windows (below), so that concurrent first runs still do not crash. Leaving it unprepared brought the crash above back: with a fresh `HOME` and `CacheDir=…/cache-é`, 2 of 4 concurrent `Scan`s failed with an `*ExitError` of code -1 and an empty stderr after 0.2–0.5 s, every time; 4 of 4 succeeded with an ASCII `CacheDir` (`TestScanOpengrepColdNotASCII` now checks it). The marker holds the `XDG_CACHE_HOME` and `HOME` of `Env` that pick opengrep's own place, so that a run with others, such as a new `HOME` with the same `CacheDir`, prepares that place too; a change of either costs one serialised warm `--version` (about 1 s).
 
 A cancelled preparation returns the ctx error.
 
-**Windows.**
+**Windows, and a `CacheDir` that is not ASCII.**
 
-- The location cannot be redirected, so a marker `<CacheDir>/runtime-<k>.ready` is used instead.
-- If it exists, the runtime is ready (one `stat`).
-- Otherwise, under the same mutex and lock, gogrep runs `<exe> --version` alone, which unpacks in place, then creates the marker. Other gogrep processes wait on the lock.
+- The location cannot be redirected (on Windows) or must not be (under a `CacheDir` that is not ASCII), so a marker `<CacheDir>/runtime-<k>.ready` is used instead.
+- If it exists and holds what it should, the runtime is ready (one small read). On Windows it is empty; on Linux and macOS it holds `XDG_CACHE_HOME=…` and `HOME=…` from `Env`.
+- Otherwise, under the same mutex and lock, gogrep runs `<exe> --version` alone, which unpacks in place, then writes the marker. Other goroutines and gogrep processes wait on the mutex and the lock.
 - **Limits, documented:**
   - Windows behaviour is unverified; a CI step checks it (§7.5).
-  - A stale marker left after a user deletes `%LOCALAPPDATA%\opengrep` brings back today's behaviour.
+  - A stale marker left after a user deletes `%LOCALAPPDATA%\opengrep` (or `~/.cache/opengrep`) brings back today's behaviour.
   - opengrep processes started by other programs are not covered.
 
 **Not covered on any OS.** If someone damages a published runtime, opengrep's in-place repair can again race. This is documented.
@@ -1398,7 +1405,7 @@ Locks are polled every 100 ms, so ctx can cancel the wait. The OS releases them 
 | `.` | 0o700 | everything below | — |
 | `opengrep-<sha16>/opengrep[.exe]` | directory and file 0o700 | extraction, `InstallOpengrep` | `PruneCache`, if not a current pin and unused for `MaxAge`, and for at least two days: a process marks what it runs at most once a day, so a shorter `MaxAge` would remove what a long-running host still runs |
 | `runtime-<sha16>/opengrep/<version>/` (Linux, macOS) | directory 0o700; opengrep's own modes inside | runtime preparation | same rule, under the runtime's lock (kept while it is held), renamed into a `.runtime-*` before it is removed, so that a starting run finds it complete or absent and never repairs a half-removed one in place |
-| `runtime-<sha16>.ready` (Windows) | 0o600 | runtime preparation | same rule |
+| `runtime-<sha16>.ready` (Windows, or a `CacheDir` that is not ASCII) | 0o600 | runtime preparation | same rule |
 | `selections/<sha16>.yaml` | 0o600 | `rules.Write`, content-addressed (unchanged, so printed `--show-opengrep-output` lines can still be rerun); modification time refreshed on reuse | `PruneCache`, after `MaxAge` unused |
 | `logs/opengrep-*.log` | 0o600, created before opengrep opens it | `Scan`, `Test`, runtime preparation (`SEMGREP_LOG_FILE`) | when that opengrep process ends; `PruneCache` after a day |
 | `locks/{install,runtime}-<sha16>.lock` | 0o600 | §4.7 | kept (empty) |
@@ -1750,7 +1757,8 @@ The fake's modes:
   - two re-executed processes never overlap;
   - a failed `--version` publishes nothing and the run proceeds;
   - a cancelled unpack leaves no `.runtime-*`;
-  - the Windows marker path on windows-latest.
+  - the marker path on windows-latest, and under a `CacheDir` that is not ASCII everywhere: one run for 8 goroutines and for two processes, a marker that a new `XDG_CACHE_HOME` does not match;
+  - with the real opengrep, 4 concurrent cold `Scan`s under a `CacheDir` that is not ASCII and a new `HOME`.
 - **musl detection** (`internal/pin`) with `fstest.MapFS`: musl only, glibc only, both, neither.
 - **`PruneCache`:** removal by age and by pin; current entries kept; temporaries older than a day removed.
 

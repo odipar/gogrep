@@ -102,7 +102,10 @@ type Config struct {
 	// runtime is under a path that is not. Under such a CacheDir, gogrep
 	// leaves the runtime where opengrep keeps it by itself
 	// ($XDG_CACHE_HOME/opengrep or ~/.cache/opengrep, from Env), which must
-	// then be ASCII.
+	// then be ASCII, and, as on Windows, has one opengrep unpack it there
+	// alone, across goroutines and processes, so that concurrent first runs
+	// do not crash; runtime-<sha16>.ready in CacheDir then records for which
+	// XDG_CACHE_HOME and HOME that was done.
 	CacheDir string
 
 	// Env is the environment opengrep runs in, as in exec.Cmd.Env. nil
@@ -112,7 +115,8 @@ type Config struct {
 	// itself selects a UTF-8 locale (PYTHONUTF8=1 on Windows), since
 	// opengrep crashes on non-ASCII rules otherwise, and on Linux and macOS
 	// set XDG_CACHE_HOME to the runtime directory in CacheDir once it is
-	// prepared. opengrep runs git, which it finds through Env's PATH.
+	// prepared, unless CacheDir is not ASCII. opengrep runs git, which it
+	// finds through Env's PATH.
 	Env []string
 
 	// Logger receives gogrep's own records at Debug and Info level: which

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -222,6 +223,49 @@ func TestScanOpengrepConcurrently(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// Concurrent first scans with a CacheDir that is not ASCII, where opengrep's
+// runtime stays where opengrep keeps it, do not crash: as on Windows, the
+// first run there is serialised. HOME is new, which on Linux and macOS
+// makes that runtime cold; before, 2 of 4 such scans failed with an
+// *ExitError of code -1.
+func TestScanOpengrepColdNotASCII(t *testing.T) {
+	e := requireOpengrep(t)
+	t.Parallel()
+	info, err := e.Opengrep(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	env := []string{"HOME=" + home}
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); name != "HOME" && name != "XDG_CACHE_HOME" {
+			env = append(env, kv)
+		}
+	}
+	cold := newEngine(t, Config{Opengrep: info.Path, AllowUnpinned: true, CacheDir: filepath.Join(t.TempDir(), "cache-é"), Env: env})
+	var wg sync.WaitGroup
+	for i := range 4 {
+		name := fmt.Sprintf("cold%d.go", i)
+		dir := copyProject(t, map[string]string{name: "package main\n\nimport \"os/exec\"\n\nfunc main() { exec.Command(\"ls\") }\n"})
+		wg.Go(func() {
+			res, err := cold.Scan(context.Background(), dir, &ScanOptions{Selection: Selection{Rules: []string{"project.go.no-exec-command"}}, Jobs: 1})
+			if err != nil {
+				t.Errorf("Scan %d: %v", i, err)
+				return
+			}
+			if len(res.Findings) != 1 || res.Findings[0].Path != name {
+				t.Errorf("Scan of the copy with %s found %+v; want one finding there", name, res.Findings)
+			}
+		})
+	}
+	wg.Wait()
+	if runtime.GOOS != "windows" && info.Version != "" {
+		if fi, err := os.Stat(filepath.Join(home, ".cache", "opengrep", info.Version)); err != nil || !fi.IsDir() {
+			t.Errorf("opengrep's runtime in the new HOME: %v; want it unpacked there", err)
+		}
+	}
 }
 
 // The fixtures of testdata/project pass.

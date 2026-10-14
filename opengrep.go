@@ -32,9 +32,10 @@ type OpengrepInfo struct {
 // each path, size and modification time. The first time an executable is
 // used with a CacheDir, Opengrep unpacks opengrep's runtime (about 245 MB
 // and 8 s) privately and publishes it there, so that concurrent opengrep
-// processes never start from a half-written runtime. That opengrep runs in a
-// process group of its own, which a terminal's Ctrl-C does not reach, and
-// ctx stops it.
+// processes never start from a half-written runtime; on Windows, and under
+// a CacheDir that is not ASCII, it has that opengrep unpack it alone where
+// opengrep keeps it. That opengrep runs in a process group of its own,
+// which a terminal's Ctrl-C does not reach, and ctx stops it.
 //
 // Scan, Test and Command call Opengrep; call it yourself to fail early.
 // When no opengrep is found, it returns an error that wraps ErrNoOpengrep
