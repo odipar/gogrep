@@ -6,3 +6,10 @@ rules:
     pattern: exec.Command($CMD, ...)
     paths:
       exclude: ["*_test.go"]
+    metadata:
+      category: security
+      subcategory: [audit]
+      confidence: HIGH
+      likelihood: LOW
+      impact: HIGH
+      technology: [go]
