@@ -108,7 +108,7 @@ func (c *cli) runLint(args []string, sel selection) int {
 	// a missing path is a stat error.
 	for _, p := range paths {
 		if !filepath.IsLocal(p) {
-			fmt.Fprintf(c.stderr, "gogrep: %s is not a relative path inside the current directory\n", p)
+			fmt.Fprintf(c.stderr, "gogrep: %q is not a relative path inside the current directory\n", p)
 			return 2
 		}
 		if _, err := os.Stat(filepath.Join(c.dir, p)); errors.Is(err, fs.ErrNotExist) {

@@ -363,26 +363,34 @@ func TestLintTooManyFiles(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
-	// Arguments (path and a separator) of 120 bytes each: 250 fill the
-	// 30,000 bytes allowed exactly.
+	// Arguments (path and a separator) of per bytes each, so that fit of them
+	// fill the limit exactly; "more" holds one too many.
+	limit, per := maxLintTargetBytes(runtime.GOOS), 120
+	for limit%per != 0 {
+		per++
+	}
+	fit := limit / per
+	pad := strings.Repeat("x", per-1-len("many/")-6-len(".yaml"))
 	files := map[string]string{"z.yaml": ""}
 	var many []string
-	for i := range 250 {
-		name := fmt.Sprintf("many/%s%03d.yaml", strings.Repeat("x", 106), i)
-		files[name] = ""
-		many = append(many, name)
-		files[fmt.Sprintf("more/%s%03d.yaml", strings.Repeat("x", 107), i)] = ""
+	for i := range fit + 1 {
+		if i < fit {
+			name := fmt.Sprintf("many/%s%06d.yaml", pad, i)
+			files[name] = ""
+			many = append(many, name)
+		}
+		files[fmt.Sprintf("more/%s%06d.yaml", pad, i)] = ""
 	}
 	writeTree(t, dir, files)
 	e := newFakeEngine(t)
-	res, err := e.Lint(ctx, dir, &LintOptions{Paths: []string{"many", many[0]}})
+	res, err := e.Lint(ctx, dir, &LintOptions{Paths: []string{"many"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	checkFiles(t, res, many)
 	for _, paths := range [][]string{{"more"}, {"many", "z.yaml"}} {
 		res, err := e.Lint(ctx, dir, &LintOptions{Paths: paths})
-		want := fmt.Sprintf("too many rule files (%d); lint fewer paths at once", 250+len(paths)-1)
+		want := fmt.Sprintf("too many rule files (%d) for one opengrep command line; lint subdirectories separately", fit+1)
 		if res != nil || err == nil || err.Error() != want {
 			t.Errorf("Lint of %q = %v, %v; want no Result and %q", paths, res, err, want)
 		}
@@ -829,4 +837,31 @@ func TestLintOpengrep(t *testing.T) {
 			}
 		}
 	})
+}
+
+// A nested project's fixtures, below a linted path, are skipped as the
+// directory's own are, and a path into them is refused.
+func TestLintNestedFixtures(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	nested := "sub/" + ProjectRulesDir
+	writeTree(t, dir, map[string]string{
+		nested + "/go/a.yaml":           "rules: []\n",
+		nested + "/test/go/x/rule.ref":  "a\n",
+		nested + "/test/go/x/bad.yaml":  "rules: [\n",
+		nested + "/Test/go/y/also.yaml": "rules: [\n",
+	})
+	e := newFakeEngine(t)
+	for _, p := range []string{".", "sub", nested} {
+		res, err := e.Lint(ctx, dir, &LintOptions{Paths: []string{p}})
+		if err != nil {
+			t.Fatalf("Lint of %s: %v", p, err)
+		}
+		checkFiles(t, res, []string{nested + "/go/a.yaml"})
+	}
+	p := nested + "/test/go"
+	if _, err := e.Lint(ctx, dir, &LintOptions{Paths: []string{p}}); err == nil || !strings.Contains(err.Error(), "rule test fixtures") {
+		t.Errorf("Lint of %s: err = %v, want the fixtures refused", p, err)
+	}
 }

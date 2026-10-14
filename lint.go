@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 )
@@ -20,10 +21,16 @@ import (
 // patterns.
 const LintSuite = "rule-lint"
 
-// maxLintTargetBytes caps the length of the rule file arguments of a lint,
-// which keeps opengrep's command line below Windows' limit of 32,767
-// characters, as for the samples of a rule test fixture.
-const maxLintTargetBytes = 30000
+// maxLintTargetBytes caps the length of the rule file arguments of a lint on
+// the system goos: below Windows' command-line limit of 32,767 characters, as
+// for the samples of a rule test fixture, and well below ARG_MAX elsewhere
+// (1 MiB on macOS, more on Linux).
+func maxLintTargetBytes(goos string) int {
+	if goos == "windows" {
+		return 30000
+	}
+	return 200000
+}
 
 // noFilesLog is the SARIF log of a lint without rule files, which runs no
 // opengrep: one complete run, without rules, results or notifications.
@@ -89,7 +96,8 @@ type LintResult struct {
 // path inside dir, does not exist, lies in ProjectTestsDir or is a file but
 // not a rule file; for a directory below a path that cannot be read; for a
 // symlink that leads outside dir; for more rule files than opengrep's
-// command line holds (about 30,000 bytes of paths); and one naming
+// command line holds (30,000 bytes of paths on Windows, 200,000
+// elsewhere); and one naming
 // ProjectRulesDir when no paths are given and dir has none.
 func (e *Engine) Lint(ctx context.Context, dir string, opts *LintOptions) (*LintResult, error) {
 	if opts == nil {
@@ -122,8 +130,8 @@ func (e *Engine) Lint(ctx context.Context, dir string, opts *LintOptions) (*Lint
 		targets[i] = filepath.FromSlash(f)
 		size += len(f) + 1 // and a separator
 	}
-	if size > maxLintTargetBytes {
-		return nil, fmt.Errorf("too many rule files (%d); lint fewer paths at once", len(files))
+	if size > maxLintTargetBytes(runtime.GOOS) {
+		return nil, fmt.Errorf("too many rule files (%d) for one opengrep command line; lint subdirectories separately", len(files))
 	}
 
 	sel := Selection{Suites: []string{cmp.Or(opts.Suite, LintSuite)}}
@@ -266,13 +274,13 @@ func renamed(err error, p string) error {
 	return err
 }
 
-// inFixtures reports whether the relative path p lies in one of the fixture
-// directories roots, in any letter case, as the test root is reserved in any
-// letter case.
+// inFixtures reports whether the relative path p lies in one of the
+// fixture roots, in any letter case, as the test root is reserved in any
+// letter case, also when it is a nested project's: a root that p's path
+// contains as whole elements, as in testdata/project/opengrep/gogrep/rules/test.
 func inFixtures(p string, roots ...string) bool {
-	p = strings.ToLower(path.Clean(filepath.ToSlash(p)))
+	p = "/" + strings.ToLower(path.Clean(filepath.ToSlash(p))) + "/"
 	return slices.ContainsFunc(roots, func(root string) bool {
-		root = strings.ToLower(root)
-		return p == root || strings.HasPrefix(p, root+"/")
+		return strings.Contains(p, "/"+strings.ToLower(root)+"/")
 	})
 }
