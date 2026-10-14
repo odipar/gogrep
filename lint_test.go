@@ -320,7 +320,7 @@ func TestLintSymlinks(t *testing.T) {
 		{outside, "linked", []string{"linked"}, "linked leads outside the directory through a symlink"},
 		{"../x.txt", ProjectRulesDir + "/go/txt.yaml", nil, ProjectRulesDir + "/go/txt.yaml leads to " + ProjectRulesDir + "/x.txt, which is not a .yaml or .yml file"},
 		{"x.txt", "txt.yaml", []string{"txt.yaml"}, "txt.yaml leads to x.txt, which is not a .yaml or .yml file"},
-		{"nowhere.yaml", ProjectRulesDir + "/go/gone.yaml", nil, "stat " + ProjectRulesDir + "/go/gone.yaml: "},
+		{"nowhere.yaml", ProjectRulesDir + "/go/gone.yaml", nil, ProjectRulesDir + "/go/gone.yaml: "}, // a *fs.PathError for it
 	}
 	for _, tt := range tests {
 		dir := t.TempDir()
@@ -330,7 +330,9 @@ func TestLintSymlinks(t *testing.T) {
 		}
 		symlink(t, dir, tt.target, tt.link)
 		res, err := e.Lint(ctx, dir, &LintOptions{Paths: tt.paths})
-		if res != nil || err == nil || !strings.HasPrefix(err.Error(), tt.want) || strings.HasSuffix(tt.want, ": ") != errors.Is(err, fs.ErrNotExist) {
+		var pe *fs.PathError
+		if p, ok := strings.CutSuffix(tt.want, ": "); ok && (res != nil || !errors.Is(err, fs.ErrNotExist) || !errors.As(err, &pe) || pe.Path != p) ||
+			!ok && (res != nil || err == nil || err.Error() != tt.want) {
 			t.Errorf("Lint of %q with a symlink %s to %s = %v, %v; want no Result and %q", tt.paths, tt.link, tt.target, res, err, tt.want)
 		}
 	}
@@ -503,8 +505,9 @@ func TestLintArguments(t *testing.T) {
 
 	for _, p := range []string{"missing", "opengrep/gogrep/rules/go/missing.yaml"} {
 		res, err := missing.Lint(ctx, dir, &LintOptions{Paths: []string{"opengrep/gogrep/rules", p}})
-		if res != nil || !errors.Is(err, fs.ErrNotExist) || !strings.HasPrefix(err.Error(), "stat "+p+": ") {
-			t.Errorf("Lint of %s = %v, %v; want no Result and a stat error that names it", p, res, err)
+		var pe *fs.PathError
+		if res != nil || !errors.Is(err, fs.ErrNotExist) || !errors.As(err, &pe) || pe.Path != p {
+			t.Errorf("Lint of %s = %v, %v; want no Result and a *fs.PathError that names it", p, res, err)
 		}
 	}
 	for _, p := range []string{"main.go", "a.yaml.txt"} {
