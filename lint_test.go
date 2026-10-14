@@ -742,6 +742,24 @@ func TestLintOpengrep(t *testing.T) {
 		}
 	})
 
+	// Findings that nosemgrep suppresses are kept, with Suppressed set.
+	t.Run("suppressed", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		writeTree(t, dir, map[string]string{"r/sup.yaml": strings.Replace(rule("sup", "go"), "- id: sup", "- id: sup # nosemgrep", 1)})
+		res, err := e.Lint(ctx, dir, &LintOptions{Paths: []string{"r"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ok := len(res.Findings) == 2
+		for _, f := range res.Findings {
+			ok = ok && f.Suppressed
+		}
+		if !ok {
+			t.Errorf("Lint of a rule without metadata whose id has nosemgrep = %+v; want its 2 findings, suppressed", res.Findings)
+		}
+	})
+
 	// A rule file that opengrep cannot parse has no findings but a
 	// diagnostic, a syntax error that names it.
 	t.Run("syntax error", func(t *testing.T) {

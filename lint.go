@@ -76,6 +76,9 @@ type LintResult struct {
 // error. When there are no rule files, Lint runs no opengrep and returns a
 // complete Result without findings, whose SARIF log has no rules.
 //
+// Findings include those that a nosemgrep comment suppresses, with
+// Suppressed set; gogrep lint does not count them as problems.
+//
 // A rule file that opengrep cannot parse has no findings: it appears in
 // Result.Diagnostics, as a syntax error ("Other syntax error at line
 // <file>:<line>: ..."). gogrep lint counts that as a problem. Unlike Scan,

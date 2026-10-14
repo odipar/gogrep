@@ -691,8 +691,9 @@ absolute directory, and the ones that run opengrep take a `context.Context`.
 `Lint` is the library's [`gogrep lint`](#6-lint-custom-rules): a `Scan`,
 with the `rule-lint` suite, of the rule files in `opengrep/gogrep/rules`,
 or in `LintOptions.Paths`, which it lists in `Files`; its findings are the
-problems, and a rule file that opengrep cannot parse shows up in
-`Diagnostics` as a syntax error:
+problems, less those that `nosemgrep` suppresses (`Suppressed`), and a
+rule file that opengrep cannot parse shows up in `Diagnostics` as a syntax
+error:
 
 ```go
 res, err := eng.Lint(ctx, "/abs/project", nil) // or &gogrep.LintOptions{Paths: []string{"rules"}}
@@ -700,6 +701,9 @@ if err != nil {
 	return err
 }
 for _, f := range res.Findings {
+	if f.Suppressed {
+		continue // nosemgrep; gogrep lint does not count these
+	}
 	fmt.Printf("%s:%d:%d: %s\n", f.Path, f.StartLine, f.StartColumn, f.RuleID)
 }
 fmt.Println(len(res.Files), "rule files")

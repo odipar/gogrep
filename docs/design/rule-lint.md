@@ -74,6 +74,7 @@ type LintResult struct {
 func (e *Engine) Lint(ctx context.Context, dir string, opts *LintOptions) (*LintResult, error)
 ```
 
+- Its findings include those that `nosemgrep` suppresses, with `Suppressed` set, as Scan's do; `gogrep lint` does not count them as problems.
 - Lint is Scan with a fixed selection (`Selection{Suites: []string{suite}}`) and `Targets` set to the rule files of §2, which it returns as `Files`. Without rule files it runs no opengrep and returns a complete `Result` without findings, whose SARIF log has no rules. Errors are Scan's, plus plain errors for a path that is not a relative path inside dir (`lint path "../x" is not a relative path inside the directory`) does not exist, lies in the fixtures or is a file but not a rule file, for an unreadable directory, a symlink that leads outside dir and too many rule files, and one naming `opengrep/gogrep/rules` when no paths are given and it does not exist.
 - A project rule file that does not parse stops Scan, Rules and Test with an error that names it (`opengrep/gogrep/rules/go/x.yaml: yaml: …`), but not Lint: an unexported `ScanOptions` field that Lint sets makes the project rules load without such files, and opengrep reports the file as a syntax error (§2).
 - The CLI's `gogrep lint` is a thin layer over `Lint`, as `scan` is over `Scan`.
